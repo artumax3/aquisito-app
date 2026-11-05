@@ -11,7 +11,9 @@ export interface StorageAdapter {
   remove(key: string): Promise<void>;
 }
 
-const signingSecret = () => config().SANDBOX_WEBHOOK_SECRET + ':storage';
+import { createHash } from 'crypto';
+/** Secreto de firma de enlaces locales derivado de DATA_ENCRYPTION_KEY (obligatoria fuera de desarrollo). */
+const signingSecret = () => createHash('sha256').update(`storage-links:${config().DATA_ENCRYPTION_KEY || 'aquisito-dev-only-key'}`).digest('hex');
 
 /** Disco local privado (dev). Los archivos se sirven solo vía /files/signed con firma y vencimiento. */
 class LocalStorage implements StorageAdapter {
