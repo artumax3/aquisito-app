@@ -1,0 +1,7 @@
+{
+  "name": "@aquisito/config",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": { "build": "echo config-ok", "typecheck": "echo config-ok" }
+}
