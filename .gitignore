@@ -1,0 +1,15 @@
+node_modules
+dist
+.next
+.expo
+*.log
+.env
+.env.*
+!.env.example
+coverage
+playwright-report
+test-results
+storage/
+apps/*/web-build
+apps/*/dist-export
+*.tsbuildinfo
