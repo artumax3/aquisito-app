@@ -6,6 +6,7 @@ import type { CourierDeliveryDto, OfferDto } from '@aquisito/contracts';
 import { LABELS } from '@aquisito/contracts';
 import { api, errorMessage, useQuery, useRealtime } from '@/lib/api';
 import { ActionButton, AlcoholNotices, Empty, Loading, Money, useSession } from '@/components/ui';
+import { DocumentList, DocumentUploader } from '@/components/upload';
 
 const MapView = dynamic(() => import('@/components/map').then((m) => m.MapView), { ssr: false });
 
@@ -70,6 +71,7 @@ export default function CourierPage() {
         </div>
       )}
       <Earnings />
+      <CourierDocs />
     </section>
   );
 }
@@ -179,5 +181,18 @@ function Earnings() {
       </div>
       <span className="muted small">{e.data.note}</span>
     </div>
+  );
+}
+
+function CourierDocs() {
+  const docs = useQuery<any[]>('courierDocuments');
+  return (
+    <details className="card">
+      <summary><strong>Mis documentos</strong></summary>
+      <div className="col">
+        <DocumentList docs={docs.data ?? []} />
+        <DocumentUploader ownerType="courier" kinds={['documento_identidad', 'licencia_conducir', 'soat', 'tarjeta_propiedad', 'otro']} onDone={docs.reload} />
+      </div>
+    </details>
   );
 }

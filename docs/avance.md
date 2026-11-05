@@ -1,6 +1,6 @@
 # Avance
 
-Última actualización: 2026-11-05.
+Última actualización: 2026-11-05 (segunda sesión de trabajo).
 
 ## Estado por etapa
 
@@ -17,7 +17,8 @@
 - API NestJS con 135 rutas documentadas (OpenAPI generado) y registro verificado contra rutas reales.
 - Web: cliente (inicio, tienda, carrito/checkout, pedidos con seguimiento, búsqueda, cuenta, reclamaciones, borradores legales), panel de comercio, administración/despacho, vista de repartidor.
 - Apps Expo de cliente y repartidor.
-- 55 pruebas automatizadas (10 unitarias, 42 API, 3 E2E) pasando; ensayo de restauración; prueba de carga.
+- 61 pruebas automatizadas (10 unitarias, 47 API, 4 E2E) pasando; ensayo de restauración; prueba de carga.
+- Segunda iteración: documentos con revisión y vencimiento (y suspensión automática del permiso de alcohol), corrección de seguridad en la subida de archivos (titularidad), banners con filtro de alcohol, aviso de proximidad, alertas de reclamaciones al personal, selección explícita de producto en la app cliente, verificación de edad y registro push en las apps, prueba E2E de pérdida de conexión, optimización del listado de comercios.
 - Documentación: decisiones, trazabilidad, estados (generado), finanzas, indicadores, política de edad, integraciones, costos, manuales, borradores legales, despliegue, diseño.
 
 ## Bloqueos (requieren acción del titular)
@@ -32,5 +33,5 @@
 ## Siguiente paso recomendado
 1. Compilar `courier-mobile` con `expo run:android` en un dispositivo Android de gama media y verificar ubicación en segundo plano (registrar modelo, versión de Android y resultados).
 2. Desplegar un entorno de ensayo (staging) con Culqi en modo prueba y repetir la prueba de carga allí.
-3. Optimizar `listStores` (consulta única para horarios y tarifas) y `priceItems` (carga por lotes).
+3. Optimizar `priceItems` (carga por lotes) para reducir los valores atípicos de `PUT /cart`.
 4. Añadir mapa nativo (react-native-maps o MapLibre) y SSE/WebSocket en móvil.

@@ -20,21 +20,36 @@ export interface OpenState {
   reason: string | null;
 }
 
+interface OpenInput {
+  status: string;
+  paused: boolean;
+  pause_reason: string | null;
+  merchant_status: string;
+  city_status: string;
+  city_reason: string | null;
+  timezone: string;
+}
+
+/** Evaluación pura del estado de apertura (reutilizada por la consulta individual y la masiva). */
+export function evalOpenState(b: OpenInput, closureReason: string | null, hours: { weekday: number; o: string; c: string }[], at: Date): OpenState {
+  if (b.merchant_status !== 'approved' || b.status !== 'active') return { isOpen: false, reason: 'Comercio no publicado' };
+  if (b.city_status !== 'active') return { isOpen: false, reason: b.city_reason ?? 'Operación pausada en la ciudad' };
+  if (b.paused) return { isOpen: false, reason: b.pause_reason ?? 'Pausado temporalmente' };
+  if (closureReason) return { isOpen: false, reason: `Cierre especial: ${closureReason}` };
+  const { weekday, minutes } = localWeekdayMinutes(at, b.timezone);
+  const open = isWithinWeeklyWindows(hours.map((h) => ({ weekday: h.weekday, opens: timeToMinutes(h.o), closes: timeToMinutes(h.c) })), weekday, minutes);
+  return open ? { isOpen: true, reason: null } : { isOpen: false, reason: 'Cerrado en este horario' };
+}
+
 export async function branchOpenState(branchId: string, at = new Date(), t: Tx = db): Promise<OpenState> {
   const b = await t.one(
     `SELECT b.status, b.paused, b.pause_reason, m.status AS merchant_status, c.status AS city_status, c.pause_reason AS city_reason, c.timezone
      FROM branches b JOIN merchants m ON m.id = b.merchant_id JOIN cities c ON c.id = b.city_id WHERE b.id = $1`,
     [branchId],
   );
-  if (b.merchant_status !== 'approved' || b.status !== 'active') return { isOpen: false, reason: 'Comercio no publicado' };
-  if (b.city_status !== 'active') return { isOpen: false, reason: b.city_reason ?? 'Operación pausada en la ciudad' };
-  if (b.paused) return { isOpen: false, reason: b.pause_reason ?? 'Pausado temporalmente' };
   const closure = await t.maybe(`SELECT reason FROM branch_closures WHERE branch_id = $1 AND starts_at <= $2 AND ends_at > $2 LIMIT 1`, [branchId, at]);
-  if (closure) return { isOpen: false, reason: `Cierre especial: ${closure.reason}` };
   const hours = await t.q(`SELECT weekday, opens::text AS o, closes::text AS c FROM branch_hours WHERE branch_id = $1`, [branchId]);
-  const { weekday, minutes } = localWeekdayMinutes(at, b.timezone);
-  const open = isWithinWeeklyWindows(hours.map((h) => ({ weekday: h.weekday, opens: timeToMinutes(h.o), closes: timeToMinutes(h.c) })), weekday, minutes);
-  return open ? { isOpen: true, reason: null } : { isOpen: false, reason: 'Cerrado en este horario' };
+  return evalOpenState(b, closure?.reason ?? null, hours, at);
 }
 
 export async function feeRuleFor(t: Tx, cityId: string, zoneId: string | null, branchId: string) {
@@ -50,34 +65,52 @@ async function canSeeRestricted(a: AuthCtx | null | undefined) {
   return (await restrictedAccess(a)).allowed;
 }
 
+/** Elige la regla de tarifa más específica (sucursal > zona > ciudad, luego la más reciente). */
+function pickFeeRule(rules: any[], branchId: string, zoneId: string | null) {
+  return rules
+    .filter((r) => (r.branch_id === null || r.branch_id === branchId) && (r.zone_id === null || r.zone_id === zoneId))
+    .sort((a, b) => Number(b.branch_id !== null) - Number(a.branch_id !== null) || Number(b.zone_id !== null) - Number(a.zone_id !== null) || b.created_at - a.created_at)[0];
+}
+
+/**
+ * Listado de comercios de una ciudad. Consultas por lotes (sucursales, horarios, cierres activos,
+ * tarifas): el costo no crece con una consulta por comercio.
+ */
 export async function listStores(
   a: AuthCtx | null,
-  q: { cityId: string; q?: string; open?: string; categoryKind?: string; sort?: string; lat?: number; lng?: number },
+  q: { cityId: string; q?: string; open?: string; categoryKind?: string; sort?: string; lat?: number; lng?: number; branchId?: string },
 ): Promise<StoreSummaryDto[]> {
   const restricted = await canSeeRestricted(a);
+  const at = new Date();
   const rows = await db.q(
     `SELECT b.id, b.merchant_id, b.name, m.trade_name, b.city_id, b.prep_minutes, b.image_url, b.is_demo, b.accepts_cash,
+       b.status, b.paused, b.pause_reason, m.status AS merchant_status, c.status AS city_status, c.pause_reason AS city_reason, c.timezone,
        ST_Y(b.location) AS lat, ST_X(b.location) AS lng,
-       (SELECT array_agg(DISTINCT kind) FROM categories c WHERE c.branch_id = b.id AND ($3 OR c.kind <> 'alcohol')) AS kinds,
-       (SELECT round(avg(r.store_score)::numeric, 1) FROM ratings r JOIN orders o ON o.id = r.order_id WHERE o.branch_id = b.id) AS rating
-     FROM branches b JOIN merchants m ON m.id = b.merchant_id
-     WHERE b.city_id = $1 AND b.status = 'active' AND m.status = 'approved'
+       (SELECT array_agg(DISTINCT kind) FROM categories cat WHERE cat.branch_id = b.id AND ($3 OR cat.kind <> 'alcohol')) AS kinds,
+       (SELECT round(avg(r.store_score)::numeric, 1) FROM ratings r JOIN orders o ON o.id = r.order_id WHERE o.branch_id = b.id) AS rating,
+       (SELECT reason FROM branch_closures bc WHERE bc.branch_id = b.id AND bc.starts_at <= $4 AND bc.ends_at > $4 LIMIT 1) AS closure_reason
+     FROM branches b JOIN merchants m ON m.id = b.merchant_id JOIN cities c ON c.id = b.city_id
+     WHERE b.city_id = $1 AND b.status = 'active' AND m.status = 'approved' AND ($5::uuid IS NULL OR b.id = $5)
        AND ($2::text IS NULL OR lower(b.name) LIKE '%' || lower($2) || '%' OR lower(m.trade_name) LIKE '%' || lower($2) || '%'
             OR EXISTS (SELECT 1 FROM products p JOIN v_product_restriction r ON r.product_id = p.id
                        WHERE p.branch_id = b.id AND p.active AND ($3 OR NOT r.contains_alcohol) AND lower(p.name) LIKE '%' || lower($2) || '%'))
      ORDER BY b.name`,
-    [q.cityId, q.q ?? null, restricted],
+    [q.cityId, q.q ?? null, restricted, at, q.branchId ?? null],
   );
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const hours = await db.q(`SELECT branch_id, weekday, opens::text AS o, closes::text AS c FROM branch_hours WHERE branch_id = ANY($1)`, [ids]);
+  const rules = await db.q(`SELECT * FROM delivery_fee_rules WHERE city_id = $1 AND active`, [q.cityId]);
   const out: StoreSummaryDto[] = [];
   for (const r of rows) {
     const kinds: string[] = (r.kinds ?? []).filter(Boolean);
     if (q.categoryKind && !kinds.includes(q.categoryKind)) continue;
-    const open = await branchOpenState(r.id);
+    const open = evalOpenState(r, r.closure_reason, hours.filter((h) => h.branch_id === r.id), at);
     if (q.open === 'true' && !open.isOpen) continue;
     let fee: number | null = null;
     let eta: { min: number; max: number } | null = null;
     let method: StoreSummaryDto['distanceMethod'] = null;
-    const rule = await feeRuleFor(db, r.city_id, null, r.id);
+    const rule = pickFeeRule(rules, r.id, null);
     if (q.lat != null && q.lng != null && rule) {
       const route = await routeDistance({ lat: r.lat, lng: r.lng }, { lat: q.lat, lng: q.lng });
       fee = deliveryFee({ baseFeeCents: rule.base_fee_cents, includedMeters: rule.included_meters, perKmCents: rule.per_km_cents, surchargeCents: rule.surcharge_cents }, route.meters);
@@ -234,7 +267,7 @@ export async function storeDetail(a: AuthCtx | null, branchId: string, point?: {
     [branchId],
   );
   if (!b) throw new BizError('NOT_FOUND', 'Comercio no encontrado', 404);
-  const summary = (await listStores(a, { cityId: b.city_id, ...(point ?? {}) })).find((s) => s.id === branchId);
+  const [summary] = await listStores(a, { cityId: b.city_id, branchId, ...(point ?? {}) });
   if (!summary) throw new BizError('NOT_FOUND', 'Comercio no encontrado', 404);
   const info = await db.one(`SELECT address, sells_alcohol FROM branches WHERE id = $1`, [branchId]);
   const hours = await db.q(`SELECT weekday, to_char(opens,'HH24:MI') AS opens, to_char(closes,'HH24:MI') AS closes FROM branch_hours WHERE branch_id = $1 ORDER BY weekday, opens`, [branchId]);

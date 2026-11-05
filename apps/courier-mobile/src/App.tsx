@@ -7,6 +7,7 @@ import type { CourierDeliveryDto, MeDto, OfferDto } from '@aquisito/contracts';
 import { api, tokenStore } from './api';
 import { startBackground, startForeground, stopBackground } from './location';
 import { Badge, Banner, Btn, C, Card, Field, H, P, s } from './ui';
+import { registerPush } from './push';
 
 export default function App() {
   const [me, setMe] = useState<MeDto | null>(null);
@@ -106,6 +107,7 @@ function Courier({ me, onLogout }: { me: MeDto; onLogout: () => Promise<void> })
             {loc && <P muted>Ubicación {new Date(loc.timestamp).toLocaleTimeString('es-PE')} ±{Math.round(loc.coords.accuracy ?? 0)} m</P>}
             {locMsg && <Banner tone="warn" text={locMsg} />}
             {profile.available && <Btn kind="secondary" title="Activar ubicación en segundo plano" onPress={async () => setBgMsg(await startBackground())} />}
+            <Btn kind="secondary" title="Activar avisos de ofertas (push)" onPress={async () => setBgMsg(await registerPush())} />
             {bgMsg && <P muted>{bgMsg}</P>}
           </Card>
         )}

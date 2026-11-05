@@ -6,6 +6,8 @@ import { ApiError, formatPEN, LABELS, newIdempotencyKey, ALCOHOL_LEGAL_NOTICES }
 import type { CartDto, CityDto, MeDto, OrderDto, ProductDto, QuoteDto, StoreDetailDto, StoreSummaryDto, TrackingDto } from '@aquisito/contracts';
 import { api, tokenStore } from './api';
 import { Badge, Banner, Btn, C, Card, errorText, Field, H, P, s } from './ui';
+import { registerPush } from './push';
+import { Modal } from 'react-native';
 
 type Route = { name: 'home' } | { name: 'store'; id: string } | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'account' };
 
@@ -112,6 +114,7 @@ function Home({ go }: { go: (r: Route) => void }) {
   const addresses = useLoad<any[]>(() => api.call('addresses'));
   const addr = (addresses.data ?? []).find((a) => a.cityId === cityId && a.inCoverage);
   const stores = useLoad<StoreSummaryDto[]>(async () => (cityId ? api.call('stores', { query: { cityId, lat: addr?.lat, lng: addr?.lng } }) : []), [cityId, addr?.id]);
+  const banners = useLoad<any[]>(async () => (cityId ? api.call('banners', { query: { cityId } }) : []), [cityId]);
   return (
     <ScrollView contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={stores.loading} onRefresh={stores.reload} />}>
       {cities.error && <Banner tone="bad" text={cities.error} />}
@@ -124,6 +127,14 @@ function Home({ go }: { go: (r: Route) => void }) {
       </View>
       {!cityId && <P muted>Elige tu ciudad. No hacemos envíos entre ciudades.</P>}
       {cityId && (addr ? <P muted>Entregar en: {addr.label} · {addr.line1}</P> : <Banner tone="warn" text="Agrega una dirección en esta ciudad desde Cuenta para ver costos exactos." />)}
+      {banners.data?.map((b) => (
+        <Card key={b.id}>
+          <Text style={{ fontWeight: '800' }}>{b.title}{b.containsAlcohol ? ' · 18+' : ''}</Text>
+          <P>{b.body}</P>
+          <P muted>Condiciones: {b.conditions}</P>
+          {b.linkBranchId && <Btn kind="secondary" title="Ver comercio" onPress={() => go({ name: 'store', id: b.linkBranchId })} />}
+        </Card>
+      ))}
       {stores.error && <Banner tone="bad" text={stores.error} />}
       {stores.data?.map((st) => (
         <Pressable key={st.id} onPress={() => go({ name: 'store', id: st.id })}>
@@ -144,22 +155,7 @@ function Home({ go }: { go: (r: Route) => void }) {
 function Store({ id, go }: { id: string; go: (r: Route) => void }) {
   const store = useLoad<StoreDetailDto>(() => api.call('store', { params: { id } }), [id]);
   const [msg, setMsg] = useState<string | null>(null);
-  async function add(p: ProductDto, replace = false): Promise<void> {
-    const comboSelections = Object.fromEntries((p.combo?.components ?? []).map((c) => [c.id, c.options[0]?.variantId]));
-    const required = p.modifierGroups.filter((g) => g.minSelect > 0).flatMap((g) => g.options.slice(0, g.minSelect).map((o) => o.id));
-    const cart = await api.call('cart');
-    const keep = cart.branchId === id ? cart.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, modifierOptionIds: l.modifierOptionIds, comboSelections: l.comboSelections })) : [];
-    try {
-      await api.call('putCart', { body: { branchId: id, replaceOtherBranch: replace, items: [...keep, { variantId: p.variants[0].id, quantity: 1, modifierOptionIds: required, comboSelections }] } });
-      setMsg(`${p.name} agregado al carrito`);
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'CART_OTHER_BRANCH') {
-        setMsg('Tu carrito tiene productos de otro comercio. Toca de nuevo "Agregar" con la opción reemplazar.');
-        throw e;
-      }
-      throw e;
-    }
-  }
+  const [sheet, setSheet] = useState<ProductDto | null>(null);
   if (store.loading) return <View style={s.content}><P>Cargando…</P></View>;
   if (store.error) return <View style={s.content}><Banner tone="bad" text={store.error} /></View>;
   const st = store.data!;
@@ -167,22 +163,108 @@ function Store({ id, go }: { id: string; go: (r: Route) => void }) {
     <ScrollView contentContainerStyle={s.content}>
       <H>{st.name}</H>
       <Badge text={st.isOpen ? 'Abierto' : `Cerrado · ${st.closedReason}`} tone={st.isOpen ? 'ok' : 'warn'} />
-      {st.restrictedContentHidden && <Banner text="Hay productos solo para adultos verificados. Solicita tu verificación desde la web (Cuenta)." />}
+      {st.restrictedContentHidden && <Banner text="Hay productos solo para adultos verificados. Solicita tu verificación en Cuenta." />}
       {st.products.some((p) => p.containsAlcohol) && ALCOHOL_LEGAL_NOTICES.map((n) => <Text key={n} style={s.legal}>{n}</Text>)}
       {msg && <Banner text={msg} />}
       {st.products.map((p) => (
         <Card key={p.id}>
           <Text style={{ fontWeight: '700' }}>{p.name} {p.containsAlcohol ? '· 18+' : ''}</Text>
           <P muted>{p.description}</P>
-          {p.combo && <P muted>Incluye: {p.combo.components.map((c) => `${c.quantity} × ${c.label}`).join(' + ')}</P>}
+          {p.combo && <P muted>Incluye: {p.combo.components.map((c) => `${c.quantity} × ${c.label}`).join(' + ')}{p.combo.savingsCents > 0 ? ` · ahorro ${formatPEN(p.combo.savingsCents)} vs. ${formatPEN(p.combo.referencePriceCents)}` : ''}</P>}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontWeight: '800' }}>{formatPEN(p.variants[0]?.priceCents ?? 0)}</Text>
-            {p.available ? <Btn title="Agregar" onPress={() => add(p).catch(async (e) => { if (e instanceof ApiError && e.code === 'CART_OTHER_BRANCH') await add(p, true); else throw e; })} /> : <Badge tone="bad" text="Agotado" />}
+            {p.available ? <Btn title="Elegir" onPress={() => setSheet(p)} /> : <Badge tone="bad" text="Agotado" />}
           </View>
         </Card>
       ))}
       <Btn kind="secondary" title="Ver carrito" onPress={() => go({ name: 'cart' })} />
+      {sheet && <ProductSheet product={sheet} storeId={id} onClose={() => setSheet(null)} onAdded={(m) => { setSheet(null); setMsg(m); }} />}
     </ScrollView>
+  );
+}
+
+/** Selección explícita de presentación, adicionales y opciones de combo: nada se elige en silencio. */
+function ProductSheet({ product, storeId, onClose, onAdded }: { product: ProductDto; storeId: string; onClose: () => void; onAdded: (msg: string) => void }) {
+  const [variantId, setVariantId] = useState(product.variants[0]?.id);
+  const [mods, setMods] = useState<string[]>([]);
+  const [combo, setCombo] = useState<Record<string, string>>(() => Object.fromEntries((product.combo?.components ?? []).filter((c) => c.options.length === 1).map((c) => [c.id, c.options[0].variantId])));
+  const [qty, setQty] = useState(1);
+  const [notes, setNotes] = useState('');
+  const [replaceAsk, setReplaceAsk] = useState(false);
+  const variant = product.variants.find((v) => v.id === variantId)!;
+  const modCost = product.modifierGroups.flatMap((g) => g.options).filter((o) => mods.includes(o.id)).reduce((a, o) => a + o.priceCents, 0);
+  const missingGroup = product.modifierGroups.find((g) => mods.filter((m) => g.options.some((o) => o.id === m)).length < g.minSelect);
+  const missingCombo = (product.combo?.components ?? []).find((c) => !combo[c.id]);
+  async function add(replace: boolean) {
+    const cart = await api.call('cart');
+    const keep = cart.branchId === storeId ? cart.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, modifierOptionIds: l.modifierOptionIds, comboSelections: l.comboSelections, notes: l.notes ?? undefined })) : [];
+    try {
+      await api.call('putCart', { body: { branchId: storeId, replaceOtherBranch: replace, items: [...keep, { variantId, quantity: qty, modifierOptionIds: mods, comboSelections: combo, notes: notes || undefined }] } });
+      onAdded(`${product.name} agregado al carrito`);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'CART_OTHER_BRANCH') { setReplaceAsk(true); return; }
+      throw e;
+    }
+  }
+  const toggle = (gId: string, oId: string, max: number) => {
+    const g = product.modifierGroups.find((x) => x.id === gId)!;
+    const inGroup = mods.filter((m) => g.options.some((o) => o.id === m));
+    if (mods.includes(oId)) setMods(mods.filter((m) => m !== oId));
+    else if (inGroup.length < max) setMods([...mods, oId]);
+    else if (max === 1) setMods([...mods.filter((m) => !inGroup.includes(m)), oId]);
+  };
+  return (
+    <Modal animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+        <ScrollView style={{ maxHeight: '88%', backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16 }} contentContainerStyle={s.content}>
+          <H>{product.name}</H>
+          {product.variants.length > 1 && <Text style={s.label}>Presentación</Text>}
+          {product.variants.length > 1 && product.variants.map((v) => (
+            <Pressable key={v.id} onPress={() => setVariantId(v.id)} accessibilityRole="radio" accessibilityState={{ checked: variantId === v.id }}>
+              <P>{variantId === v.id ? '● ' : '○ '}{v.name} · {formatPEN(v.priceCents)}</P>
+            </Pressable>
+          ))}
+          {product.modifierGroups.map((g) => (
+            <View key={g.id} style={{ gap: 4 }}>
+              <Text style={s.label}>{g.name} {g.minSelect > 0 ? '(obligatorio)' : '(opcional)'} · máx. {g.maxSelect}</Text>
+              {g.options.map((o) => (
+                <Pressable key={o.id} onPress={() => toggle(g.id, o.id, g.maxSelect)} accessibilityRole="checkbox" accessibilityState={{ checked: mods.includes(o.id) }}>
+                  <P>{mods.includes(o.id) ? '☑ ' : '☐ '}{o.name} {o.priceCents ? `(+${formatPEN(o.priceCents)})` : '(sin costo)'}</P>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+          {product.combo?.components.map((c) => (
+            <View key={c.id} style={{ gap: 4 }}>
+              <Text style={s.label}>{c.quantity} × {c.label}</Text>
+              {c.options.map((o) => (
+                <Pressable key={o.variantId} onPress={() => setCombo({ ...combo, [c.id]: o.variantId })} accessibilityRole="radio" accessibilityState={{ checked: combo[c.id] === o.variantId }}>
+                  <P>{combo[c.id] === o.variantId ? '● ' : '○ '}{o.name}</P>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+          <Field label="Nota para el comercio (no cambia cantidades ni precio)" value={notes} onChangeText={setNotes} maxLength={200} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <Btn kind="secondary" title="−" onPress={() => setQty(Math.max(1, qty - 1))} />
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>{qty}</Text>
+            <Btn kind="secondary" title="+" onPress={() => setQty(Math.min(50, qty + 1))} />
+          </View>
+          {missingGroup && <Banner tone="warn" text={`Elige al menos ${missingGroup.minSelect} en "${missingGroup.name}"`} />}
+          {missingCombo && <Banner tone="warn" text={`Elige una opción para "${missingCombo.label}"`} />}
+          {replaceAsk ? (
+            <>
+              <Banner tone="warn" text="Tu carrito tiene productos de otro comercio. Un pedido solo puede ser de una sucursal." />
+              <Btn kind="danger" title="Reemplazar carrito" onPress={() => add(true)} />
+            </>
+          ) : (
+            <Btn title={`Agregar · ${formatPEN((variant.priceCents + modCost) * qty)}`} disabled={!!missingGroup || !!missingCombo} onPress={() => add(false)} />
+          )}
+          <P muted>El precio final lo confirma el servidor al cotizar.</P>
+          <Btn kind="secondary" title="Cerrar" onPress={onClose} />
+        </ScrollView>
+      </View>
+    </Modal>
   );
 }
 
@@ -352,7 +434,37 @@ function Account({ me, onLogout, refresh }: { me: MeDto; onLogout: () => Promise
         }} />
         {msg && <Banner text={msg} />}
       </Card>
+      <AgeVerification me={me} refresh={refresh} />
+      <Card>
+        <H>Notificaciones</H>
+        <Btn kind="secondary" title="Activar notificaciones" onPress={async () => setMsg(await registerPush())} />
+      </Card>
       <Btn kind="danger" title="Cerrar sesión" onPress={onLogout} />
     </ScrollView>
+  );
+}
+
+function AgeVerification({ me, refresh }: { me: MeDto; refresh: () => Promise<void> }) {
+  const [docType, setDocType] = useState<'dni' | 'carne_extranjeria' | 'pasaporte'>('dni');
+  const [last4, setLast4] = useState('');
+  const [name, setName] = useState('');
+  const [birth, setBirth] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  if (!['none', 'declared', 'rejected', 'revoked'].includes(me.ageStatus)) return null;
+  return (
+    <Card>
+      <H>Verificar mayoría de edad</H>
+      <P muted>Solo para comprar bebidas alcohólicas. Una persona del equipo revisa tu solicitud; no guardamos foto de tu documento ni nos conectamos con RENIEC.</P>
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        {(['dni', 'carne_extranjeria', 'pasaporte'] as const).map((d) => <Pressable key={d} onPress={() => setDocType(d)}><Badge text={`${docType === d ? '● ' : ''}${d === 'dni' ? 'DNI' : d === 'pasaporte' ? 'Pasaporte' : 'Carné de extranjería'}`} /></Pressable>)}
+      </View>
+      <Field label="Últimos 4 caracteres del documento" autoCapitalize="characters" maxLength={4} value={last4} onChangeText={(t) => setLast4(t.toUpperCase())} />
+      <Field label="Nombre como figura en el documento" value={name} onChangeText={setName} />
+      <Field label="Fecha de nacimiento (AAAA-MM-DD)" value={birth} onChangeText={setBirth} keyboardType="numbers-and-punctuation" />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Switch value={consent} onValueChange={setConsent} /><P>Autorizo usar estos datos solo para verificar mi edad</P></View>
+      <Btn title="Solicitar verificación" disabled={!consent} onPress={async () => { await api.call('requestAgeVerification', { body: { documentType: docType, documentLast4: last4, fullNameOnDocument: name, birthDate: birth, consent: true } }); setMsg('Solicitud enviada; te avisaremos el resultado.'); await refresh(); }} />
+      {msg && <Banner text={msg} />}
+    </Card>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { OrderDto } from '@aquisito/contracts';
 import { api, errorMessage, useQuery, useRealtime } from '@/lib/api';
 import { ActionButton, Empty, ErrorBox, Loading, Money, StatusBadge, useSession } from '@/components/ui';
+import { DocumentList, DocumentUploader } from '@/components/upload';
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
@@ -11,7 +12,7 @@ export default function MerchantPanel() {
   const { me, has, loading } = useSession();
   const branches = useQuery<any[]>(me && (has('merchant_owner') || has('branch_operator')) ? 'merchantBranches' : null, {}, [me?.id]);
   const [branchId, setBranchId] = useState('');
-  const [tab, setTab] = useState<'orders' | 'catalog' | 'combos' | 'hours' | 'reports'>('orders');
+  const [tab, setTab] = useState<'orders' | 'catalog' | 'combos' | 'hours' | 'reports' | 'docs'>('orders');
   useEffect(() => {
     if (!branchId && branches.data?.length) setBranchId(branches.data[0].id);
   }, [branches.data, branchId]);
@@ -31,8 +32,8 @@ export default function MerchantPanel() {
       {b && b.merchant_status !== 'approved' && <div className="alert warn">Tu comercio está en revisión ({b.merchant_status}). Se publicará después de la aprobación.</div>}
       {b?.paused && <div className="alert warn">Sucursal pausada: {b.pause_reason}</div>}
       <div className="tabs">
-        {(['orders', 'catalog', 'combos', 'hours', 'reports'] as const).map((t) => (
-          <button key={t} className={`chip light ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{{ orders: 'Pedidos', catalog: 'Catálogo y stock', combos: 'Combos', hours: 'Horarios y pausa', reports: 'Ventas y liquidaciones' }[t]}</button>
+        {(['orders', 'catalog', 'combos', 'hours', 'reports', 'docs'] as const).map((t) => (
+          <button key={t} className={`chip light ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{{ orders: 'Pedidos', catalog: 'Catálogo y stock', combos: 'Combos', hours: 'Horarios y pausa', reports: 'Ventas y liquidaciones', docs: 'Documentos' }[t]}</button>
         ))}
       </div>
       {branchId && tab === 'orders' && <Inbox branchId={branchId} />}
@@ -40,6 +41,7 @@ export default function MerchantPanel() {
       {branchId && tab === 'combos' && <Combos branchId={branchId} />}
       {branchId && tab === 'hours' && <Hours branchId={branchId} paused={!!b?.paused} onChange={branches.reload} isOwner={!!b?.is_owner} />}
       {branchId && tab === 'reports' && <Reports branchId={branchId} />}
+      {branchId && tab === 'docs' && b && <Docs branchId={branchId} merchantId={b.merchant_id} isOwner={!!b.is_owner} alcohol={b.alcohol_permit_status} />}
     </section>
   );
 }
@@ -328,6 +330,29 @@ function Reports({ branchId }: { branchId: string }) {
         {!d.settlements.length && <span className="muted">Aún no hay liquidaciones.</span>}
         {d.settlements.map((s: any) => <div key={s.id} className="row small" style={{ justifyContent: 'space-between' }}><span>{new Date(s.period_start).toLocaleDateString('es-PE')} – {new Date(s.period_end).toLocaleDateString('es-PE')} · {s.status}</span><Money cents={s.total_cents} /></div>)}
       </div>
+    </div>
+  );
+}
+
+function Docs({ branchId, merchantId, isOwner, alcohol }: { branchId: string; merchantId: string; isOwner: boolean; alcohol: string }) {
+  const docs = useQuery<any[]>('merchantDocuments', { params: { id: branchId } });
+  return (
+    <div className="col">
+      <div className="card col">
+        <h2>Estado de habilitación para alcohol</h2>
+        <span>{{ none: 'No solicitada', pending: 'En revisión', approved: 'Aprobada', rejected: 'Rechazada', expired: 'Vencida: venta suspendida', suspended: 'Suspendida' }[alcohol] ?? alcohol}</span>
+        <span className="muted small">Para vender bebidas alcohólicas sube la autorización vigente; el equipo la revisa manualmente y la habilitación vence con el documento.</span>
+      </div>
+      <div className="card col">
+        <h2>Documentos</h2>
+        {docs.loading ? <Loading /> : <DocumentList docs={docs.data ?? []} />}
+      </div>
+      {isOwner ? (
+        <>
+          <div className="card col"><h3>Documentos de la sucursal</h3><DocumentUploader ownerType="branch" ownerId={branchId} kinds={['licencia_funcionamiento', 'autorizacion_alcohol', 'certificado_defensa_civil', 'otro']} onDone={docs.reload} /></div>
+          <div className="card col"><h3>Documentos del comercio</h3><DocumentUploader ownerType="merchant" ownerId={merchantId} kinds={['ruc', 'representante_legal', 'cuenta_liquidacion', 'licencia_funcionamiento', 'otro']} onDone={docs.reload} /></div>
+        </>
+      ) : <span className="muted small">Solo el propietario sube documentos.</span>}
     </div>
   );
 }

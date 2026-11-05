@@ -34,6 +34,7 @@ export default function Home() {
   const address = cityAddresses.find((a) => a.id === addressId) ?? cityAddresses[0];
   const city = cities.data?.find((c) => c.id === cityId);
 
+  const banners = useQuery<any[]>(cityId ? 'banners' : null, { query: { cityId: cityId ?? '' } }, [me?.id]);
   const stores = useQuery<StoreSummaryDto[]>(cityId ? 'stores' : null, {
     query: { cityId: cityId ?? '', categoryKind: kind || undefined, open: onlyOpen ? 'true' : undefined, sort: sort || undefined, lat: address?.lat, lng: address?.lng },
   });
@@ -103,6 +104,18 @@ export default function Home() {
       {address && !address.inCoverage && <div className="alert warn">Esta dirección está fuera de la zona de reparto: {address.coverageMessage}</div>}
       {city?.status === 'paused' && <div className="alert warn">Operación pausada en {city.name}: {city.pauseReason}</div>}
 
+      {(banners.data ?? []).length > 0 && (
+        <div className="grid" style={{ margin: '8px 0' }} aria-label="Promociones">
+          {banners.data!.map((b) => (
+            <div key={b.id} className="card col" style={{ background: 'var(--mango-100)', borderColor: 'transparent', gap: 4 }}>
+              <strong>{b.title} {b.containsAlcohol && <span className="badge adult">18+</span>}</strong>
+              <span className="small">{b.body}</span>
+              <span className="small muted">Condiciones: {b.conditions}</span>
+              {b.linkBranchId && <Link className="small" href={`/tienda/${b.linkBranchId}`}>Ver comercio</Link>}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="tabs" role="tablist" aria-label="Categorías">
         {KINDS.map(([k, l]) => (
           <button key={k} role="tab" aria-selected={kind === k} className={`chip light ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>{l}</button>

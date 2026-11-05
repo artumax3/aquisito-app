@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHash } from 'crypto';
-import { as, cleanup, Client, courierOnline, Ctx, E, expectOk, jobs, key, payCard, placeOrder, setup, teardown, toReadyAndAssigned, variantOf } from './helpers';
+import { as, cleanup, Client, drainOutbox, courierOnline, Ctx, E, expectOk, jobs, key, payCard, placeOrder, setup, teardown, toReadyAndAssigned, variantOf } from './helpers';
 import { db } from '../src/db/db';
 import { SandboxProvider } from '../src/providers/payments';
 import { logSink } from '../src/common/logger';
@@ -645,16 +645,21 @@ describe('26 datos sensibles fuera de logs y canales', () => {
     expect(all).toContain('[REDACTADO]');
     expect(all).not.toContain(cust.token);
   });
-  it('archivos privados solo con enlace firmado y temporal', async () => {
+  it('archivos privados solo con enlace firmado y temporal; titularidad verificada', async () => {
     const cust = await as(c, E.cAgu);
+    const ord = await db.one(`SELECT id FROM orders WHERE user_id = $1 LIMIT 1`, [ids.customer_aguaytia]);
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
-    const up = expectOk(await cust.post('/files', { ownerType: 'incident', contentBase64: png.toString('base64'), purpose: 'evidencia' })).body;
+    const up = expectOk(await cust.post('/files', { ownerType: 'incident', ownerId: ord.id, contentBase64: png.toString('base64') })).body;
     const other = await as(c, E.cNo);
     expect((await other.get(`/files/${up.id}/url`)).status).toBe(404);
+    // Nadie adjunta archivos a pedidos, comercios o repartidores ajenos.
+    expect((await other.post('/files', { ownerType: 'incident', ownerId: ord.id, contentBase64: png.toString('base64') })).status).toBe(404);
+    expect((await other.post('/files', { ownerType: 'merchant', ownerId: ids.merchant_frontera, kind: 'ruc', contentBase64: png.toString('base64') })).status).toBe(404);
+    expect((await other.post('/files', { ownerType: 'courier', ownerId: ids.courierAguaytia1, kind: 'soat', contentBase64: png.toString('base64') })).status).toBe(404);
     const url = (await cust.get(`/files/${up.id}/url`)).body.url as string;
     expect((await new Client(c).get(url)).status).toBe(200);
     expect((await new Client(c).get(url.replace(/sig=[0-9a-f]+/, 'sig=00'))).status).toBe(404);
-    const exe = await cust.post('/files', { ownerType: 'incident', contentBase64: Buffer.from('MZ\x90\x00').toString('base64') });
+    const exe = await cust.post('/files', { ownerType: 'incident', ownerId: ord.id, contentBase64: Buffer.from('MZ\x90\x00').toString('base64') });
     expect(exe.status).toBe(415);
   });
 });
@@ -782,5 +787,101 @@ describe('extras: sustituciones, OTP, sesiones, CSRF', () => {
     const ready = await m.post(`/merchant/orders/${r.res.body.id}/ready`);
     expect(ready.body.error.code).toBe('INVALID_TRANSITION');
     void createHash;
+  });
+});
+
+describe('documentos, permisos de alcohol, banners y avisos', () => {
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
+
+  it('la habilitación de alcohol exige documento vigente y se suspende al vencer', async () => {
+    const admin = await as(c, E.admin, true);
+    const owner = await as(c, E.m4); // Cevichería (sin alcohol)
+    const sinDoc = await admin.post(`/admin/branches/${ids.branch_huallaga}/alcohol-permit`, { approve: true, reason: 'intento sin documento' });
+    expect(sinDoc.body.error.code).toBe('PERMIT_DOCUMENT_REQUIRED');
+    // Un operador (no propietario) no sube documentos de otra sucursal.
+    const op = await as(c, E.op);
+    expect((await op.post('/files', { ownerType: 'branch', ownerId: ids.branch_huallaga, kind: 'autorizacion_alcohol', contentBase64: png })).status).toBe(404);
+    const future = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    const doc = expectOk(await owner.post('/files', { ownerType: 'branch', ownerId: ids.branch_huallaga, kind: 'autorizacion_alcohol', expiresAt: future, contentBase64: png })).body;
+    expect(doc.status).toBe('pending');
+    expect((await owner.get(`/merchant/branches/${ids.branch_huallaga}/documents`)).body.map((d: any) => d.id)).toContain(doc.id);
+    expectOk(await admin.post(`/admin/documents/${doc.id}/review`, { approve: true, reason: 'Revisión manual del documento' }));
+    expectOk(await admin.post(`/admin/branches/${ids.branch_huallaga}/alcohol-permit`, { approve: true, reason: 'Documento vigente' }));
+    expect((await db.one(`SELECT alcohol_permit_status, alcohol_permit_expires_at FROM branches WHERE id = $1`, [ids.branch_huallaga]))).toEqual({ alcohol_permit_status: 'approved', alcohol_permit_expires_at: future });
+    // Vence el documento → el job suspende la habilitación y avisa al propietario.
+    await db.q(`UPDATE documents SET expires_at = current_date - 1 WHERE id = $1`, [doc.id]);
+    await db.q(`UPDATE branches SET alcohol_permit_expires_at = NULL WHERE id = $1`, [ids.branch_huallaga]);
+    const r = (await jobs(['expireDocuments'])) as any;
+    await drainOutbox();
+    expect(r.expireDocuments.permits).toBeGreaterThanOrEqual(1);
+    expect((await db.one(`SELECT alcohol_permit_status FROM branches WHERE id = $1`, [ids.branch_huallaga])).alcohol_permit_status).toBe('expired');
+    const { alcoholSaleCheck } = await import('../src/modules/alcohol/alcohol.service');
+    expect((await alcoholSaleCheck({ branchId: ids.branch_huallaga, destinationJurisdictionId: ids.jRupa, instants: [new Date()] })).code).toBe('ALCOHOL_PERMIT');
+    const n = await db.one(`SELECT count(*)::int AS n FROM notifications WHERE user_id = $1 AND kind = 'permit_expired'`, [ids.owner4]);
+    expect(n.n).toBe(1);
+  });
+
+  it('banners de alcohol solo para adultos verificados; condiciones visibles', async () => {
+    const anon = (await new Client(c).get(`/banners?cityId=${ids.aguaytia}`)).body;
+    const no = (await (await as(c, E.cNo)).get(`/banners?cityId=${ids.aguaytia}`)).body;
+    const adult = (await (await as(c, E.cAgu)).get(`/banners?cityId=${ids.aguaytia}`)).body;
+    expect(anon.some((b: any) => b.containsAlcohol)).toBe(false);
+    expect(no.some((b: any) => b.containsAlcohol)).toBe(false);
+    expect(adult.some((b: any) => b.containsAlcohol)).toBe(true);
+    expect(adult.every((b: any) => b.conditions.length > 0)).toBe(true);
+    // Un banner con texto de alcohol se marca restringido aunque el admin no lo indique.
+    const admin = await as(c, E.admin, true);
+    const now = Date.now();
+    const created = expectOk(await admin.post('/admin/banners', { cityId: ids.aguaytia, title: 'Promo de vino', body: 'Vino tinto con descuento', conditions: 'Hasta agotar stock', startsAt: new Date(now - 1000).toISOString(), endsAt: new Date(now + 86400000).toISOString() })).body;
+    expect(created.containsAlcohol).toBe(true);
+    expect((await new Client(c).get(`/banners?cityId=${ids.aguaytia}`)).body.some((b: any) => b.id === created.id)).toBe(false);
+  });
+
+  it('aviso único de proximidad cuando el repartidor está a menos de 400 m', async () => {
+    const cust = await as(c, E.cAgu);
+    const v = await variantOf(ids.branch_sazon, 'Juane de gallina');
+    const r = await placeOrder(cust, ids.branch_sazon, [{ variantId: v, quantity: 1 }], { addressId: ids.address_aguaytia, paymentMethod: 'cash' });
+    const orderId = r.res.body.id;
+    const m = await as(c, E.m1);
+    const courier = await as(c, E.rAgu1);
+    await courierOnline(courier, -9.037, -75.508);
+    const { pickupCode } = await toReadyAndAssigned(c, m, courier, orderId);
+    expectOk(await courier.post(`/courier/deliveries/${orderId}/pickup`, { pickupCode, packages: 1 }));
+    expectOk(await courier.post(`/courier/deliveries/${orderId}/depart`));
+    // Lejos (≈1.5 km): sin aviso
+    await courier.post('/courier/location', { lat: -9.05, lng: -75.51, accuracyM: 10, recordedAt: new Date().toISOString() });
+    expect((await db.maybe(`SELECT 1 FROM order_nearby_notices WHERE order_id = $1`, [orderId]))).toBeNull();
+    // Cerca del destino (-9.0378, -75.5072): un solo aviso aunque se reporte varias veces.
+    for (let i = 0; i < 3; i++) await courier.post('/courier/location', { lat: -9.0381, lng: -75.5075, accuracyM: 8, recordedAt: new Date(Date.now() + i).toISOString() });
+    await drainOutbox();
+    const n = await db.one(`SELECT count(*)::int AS n FROM notifications WHERE user_id = $1 AND kind = 'courier_nearby' AND data->>'orderId' = $2`, [ids.customer_aguaytia, orderId]);
+    expect(n.n).toBe(1);
+  });
+
+  it('comercio que no responde: rechazo automático y reembolso', async () => {
+    const cust = await as(c, E.cAgu);
+    const v = await variantOf(ids.branch_sazon, 'Tacacho con cecina');
+    const r = await placeOrder(cust, ids.branch_sazon, [{ variantId: v, quantity: 1 }], { addressId: ids.address_aguaytia });
+    await payCard(cust, r.res.body.id);
+    await db.q(`UPDATE orders SET accept_deadline = now() - interval '1 second' WHERE id = $1`, [r.res.body.id]);
+    // El comercio ya no puede aceptar fuera de plazo
+    expect((await (await as(c, E.m1)).post(`/merchant/orders/${r.res.body.id}/accept`)).body.error.code).toBe('ACCEPT_EXPIRED');
+    await jobs(['expireAcceptance']);
+    await jobs(['refunds']);
+    const o = (await cust.get(`/orders/${r.res.body.id}`)).body;
+    expect([o.commercialStatus, o.paymentStatus]).toEqual(['rechazado_comercio', 'reembolsado']);
+    expect(o.history.some((h: any) => h.reason === 'El comercio no respondió dentro del plazo')).toBe(true);
+  });
+
+  it('reclamaciones notifican al personal y alertan antes de vencer', async () => {
+    const body = { consumerName: 'Luis Ruiz', consumerDocType: 'dni', consumerDocNumber: '87654321', consumerEmail: 'luis@test.local', kind: 'queja', goodType: 'servicio', detail: 'Atención descortés del soporte', request: 'Mejorar la atención' };
+    const r = expectOk(await new Client(c).post('/complaints', body)).body;
+    await db.q(`UPDATE complaints SET due_date = current_date + 1 WHERE number = $1`, [r.number]);
+    await jobs(['complaintAlerts']);
+    await drainOutbox();
+    await jobs(['complaintAlerts']);
+    await drainOutbox();
+    const n = await db.one(`SELECT count(*) FILTER (WHERE title = 'Nueva reclamación')::int AS created, count(*) FILTER (WHERE title = 'Reclamación por vencer')::int AS due FROM notifications WHERE user_id = $1 AND body LIKE $2`, [ids.support, `%${r.number}%`]);
+    expect(n).toEqual({ created: 1, due: 1 });
   });
 });

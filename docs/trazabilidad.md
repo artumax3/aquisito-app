@@ -61,9 +61,16 @@ Pruebas: `A-xx` = `apps/api/test/acceptance.test.ts` (criterio xx), `R` = `route
 | Comprobantes electrónicos SUNAT (§15) | `/carrito` (captura de datos) | — | orders.invoice_* | — | **Bloqueado** (proveedor OSE/PSE) |
 | Tres ciclos de estado con tabla de transiciones (§16) | — | — | order_status_history | U, A-extras | Probado |
 | Notificaciones internas persistentes + outbox con reintentos (§19) | `/cuenta` | notifications | notifications, outbox_events | A-01, A-18 | Probado. Push: Bloqueado |
-| Conectividad: aviso de desconexión; sin confirmación local (§19, §23-22) | web (banner), apps | — | — | A-22 | Implementado/Probado parcialmente |
+| Conectividad: aviso de desconexión; sin confirmación local (§19, §23-22) | web (banner), apps | — | — | A-22, E2E-4 | Probado |
 | Logs sin datos sensibles (§20, §23-26) | — | — | — | A-26 | Probado |
-| Archivos privados con enlace temporal (§20) | — | files, files/:id/url | documents | A-26 | Probado |
+| Archivos privados con enlace temporal y titularidad verificada (§20) | — | files, files/:id/url | documents | A-26 | Probado |
+| Documentos de comercio, sucursal y repartidor con revisión y vencimiento (§9, §10, §12D) | `/comercio` › Documentos, `/repartidor`, `/admin` › Documentos | files, merchant/branches/:id/documents, courier/documents, admin/documents | documents | A-docs | Probado |
+| Habilitación de alcohol exige documento vigente; suspensión automática al vencer (§12D) | `/admin` › Comercios | admin/branches/:id/alcohol-permit, job expireDocuments | branches, documents | A-docs | Probado |
+| Banners con condiciones visibles; alcohol solo a adultos verificados (§5, §11, §12A) | `/` (inicio web y app), `/admin` › Banners | banners, admin/banners | banners | A-banners | Probado |
+| Aviso de proximidad del repartidor (§19) | notificaciones | courier/location → outbox | order_nearby_notices | A-proximidad | Probado |
+| Rechazo automático si el comercio no responde (§9) | `/comercio` | job expireAcceptance | orders | A-vencimiento | Probado |
+| Alertas de reclamaciones al personal (§20) | `/cuenta` (staff) | job complaintAlerts → outbox | notifications | A-reclamaciones | Probado |
+| Selección explícita de variantes/adicionales/combos en app cliente; verificación de edad y push en apps (§8) | apps móviles | putCart, age-verifications, me/push-tokens | — | tsc + bundle | Implementado (push real: Bloqueado) |
 | Libro de Reclamaciones con correlativo y plazo (§20, §23-27) | `/reclamaciones`, `/admin` | complaints | complaints, complaint_counters | A-27 | Probado |
 | ARCO y eliminación con retención (§20, §23-27) | `/cuenta`, `/admin` | me/data-requests, admin/data-requests | data_requests | A-27 | Probado |
 | Rendimiento p95 < 800 ms (§21) | — | — | — | `infra/scripts/load-test.mjs` | Medido (local; ver informe) |

@@ -398,6 +398,27 @@ export const IncidentResolveInput = z.object({
   refundConcept: z.enum(['products', 'delivery', 'tip', 'service', 'mixed']).default('mixed'),
 });
 
+export const DocumentUploadInput = z.object({
+  ownerType: z.enum(['merchant', 'branch', 'courier', 'incident']),
+  ownerId: id.optional(),
+  kind: z.string().max(40).optional(),
+  expiresAt: isoDate.optional(),
+  contentBase64: z.string().min(4).max(7_000_000),
+});
+export const DocumentReviewInput = z.object({ approve: z.boolean(), reason: z.string().min(3).max(300), expiresAt: isoDate.optional() });
+export const BannerInput = z.object({
+  cityId: id.optional(),
+  title: z.string().min(3).max(80),
+  body: z.string().min(3).max(200),
+  /** Condiciones visibles (vigencia, mínimos, cupos). Obligatorias. */
+  conditions: z.string().min(3).max(300),
+  linkBranchId: id.optional(),
+  containsAlcohol: z.boolean().default(false),
+  startsAt: z.iso.datetime(),
+  endsAt: z.iso.datetime(),
+});
+export const BannerPatchInput = z.object({ active: z.boolean(), reason: z.string().min(3).max(300) });
+
 // ---------- Libro de reclamaciones ----------
 export const ComplaintInput = z.object({
   consumerName: z.string().min(2).max(150),

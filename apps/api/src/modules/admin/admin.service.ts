@@ -10,6 +10,7 @@ import { requestRefund } from '../payments/refunds';
 import { recomputeSettlement } from '../finance/ledger.service';
 import { anonymizeUser } from '../identity/identity.service';
 import { LIMA } from '../../common/time';
+import { validAlcoholPermitDocument } from '../documents/documents.service';
 
 const scopeParam = (a: AuthCtx) => opsCityScope(a);
 
@@ -192,7 +193,14 @@ export async function reviewAlcoholPermit(a: AuthCtx, branchId: string, input: {
   return tx(async (t) => {
     const b = await t.maybe(`SELECT id FROM branches WHERE id = $1`, [branchId]);
     if (!b) throw new BizError('NOT_FOUND', 'Sucursal no encontrada', 404);
-    await t.q(`UPDATE branches SET sells_alcohol = $2, alcohol_permit_status = $3, alcohol_permit_expires_at = CASE WHEN $2 THEN (now() + interval '1 year')::date ELSE NULL END WHERE id = $1`, [branchId, input.approve, input.approve ? 'approved' : 'rejected']);
+    let expires: string | null = null;
+    if (input.approve) {
+      // Requisito: documento de autorización aprobado y vigente; el permiso vence con el documento.
+      const doc = await validAlcoholPermitDocument(t, branchId);
+      if (!doc) throw new BizError('PERMIT_DOCUMENT_REQUIRED', 'Falta un documento de autorización para alcohol aprobado y vigente', 422);
+      expires = doc.expires_at;
+    }
+    await t.q(`UPDATE branches SET sells_alcohol = $2, alcohol_permit_status = $3, alcohol_permit_expires_at = $4 WHERE id = $1`, [branchId, input.approve, input.approve ? 'approved' : 'suspended', expires]);
     await audit(t, a, 'branch.alcohol_permit_reviewed', 'branch', branchId, input.reason, { approve: input.approve });
     return { approved: input.approve };
   });

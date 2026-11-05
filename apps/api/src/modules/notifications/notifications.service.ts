@@ -131,6 +131,7 @@ async function handleEvent(ev: { id: number; topic: string; aggregate_id: string
         }
       }
       if (ev.topic === 'offer.created' && p.courierId) await notify(p.courierId, 'offer', 'Nueva oferta de reparto', 'Revisa la oferta antes de que venza', { orderId: o.id }, `ev:${ev.id}:courier`);
+      if (ev.topic === 'courier.nearby') await notify(o.user_id, 'courier_nearby', 'Tu repartidor está cerca', `Pedido #${o.number}: ten a mano tu código de entrega`, { orderId: o.id }, `ev:${ev.id}:customer`);
       if (ev.topic === 'substitution.proposed') await notify(o.user_id, 'substitution', 'El comercio propone un ajuste', `Pedido #${o.number}: revisa y confirma el ajuste por faltante`, { orderId: o.id }, `ev:${ev.id}:customer`);
       if (ev.topic === 'order.created' || (ev.topic === 'order.status_changed' && p.to === 'confirmado')) {
         const staff = await db.q(
@@ -151,6 +152,15 @@ async function handleEvent(ev: { id: number; topic: string; aggregate_id: string
     await notify(p.userId, 'courier_review', 'Postulación de repartidor', p.approved ? 'Tu cuenta fue aprobada' : 'Tu postulación no fue aprobada', {}, `ev:${ev.id}:user`);
   }
   if (ev.topic.startsWith('complaint.') || ev.topic === 'incident.created') channels.push('city:*');
+  if (ev.topic === 'complaint.created' || ev.topic === 'complaint.due_soon') {
+    const c = await db.maybe(`SELECT number, due_date FROM complaints WHERE id = $1`, [p.complaintId]);
+    const staff = await db.q(`SELECT DISTINCT user_id FROM memberships WHERE role IN ('admin','support_agent') AND revoked_at IS NULL`);
+    if (c) for (const s of staff) await notify(s.user_id, 'complaint', ev.topic === 'complaint.created' ? 'Nueva reclamación' : 'Reclamación por vencer', `Hoja ${c.number}: responder hasta ${c.due_date}`, { complaintId: p.complaintId }, `ev:${ev.id}:staff:${s.user_id}`);
+  }
+  if (ev.topic === 'branch.alcohol_permit_expired' && p.branchId) {
+    const owners = await db.q(`SELECT m.user_id, b.name FROM branches b JOIN memberships m ON m.role = 'merchant_owner' AND m.merchant_id = b.merchant_id AND m.revoked_at IS NULL WHERE b.id = $1`, [p.branchId]);
+    for (const o of owners) await notify(o.user_id, 'permit_expired', 'Habilitación de alcohol vencida', `${o.name}: la venta de bebidas alcohólicas quedó suspendida hasta presentar un documento vigente`, { branchId: p.branchId }, `ev:${ev.id}:owner:${o.user_id}`);
+  }
   if (channels.length) {
     const payload = JSON.stringify({ channels: [...new Set(channels)], type: ev.topic, orderId: p.orderId ?? null, version: p.version ?? null, at: new Date().toISOString() });
     await db.q(`SELECT pg_notify('aq_events', $1)`, [payload]);

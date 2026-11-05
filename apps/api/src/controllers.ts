@@ -14,10 +14,13 @@ import * as merchant from './modules/merchant/merchant.service';
 import * as admin from './modules/admin/admin.service';
 import * as support from './modules/support/support.service';
 import * as notifications from './modules/notifications/notifications.service';
-import { storage, sniffContentType, verifyLocalSignature } from './providers/storage';
+import * as documents from './modules/documents/documents.service';
+import * as banners from './modules/promotions/banners.service';
+import { storage, verifyLocalSignature } from './providers/storage';
 import { jobStats } from './jobs';
 import { metrics } from './metrics';
-import { randomToken } from './common/crypto';
+import { tx } from './db/db';
+import { audit as auditLog } from './common/audit';
 
 const ip = (req: Request) => (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
 const isWeb = (req: Request) => req.headers['x-client'] === 'web';
@@ -138,6 +141,7 @@ export class CatalogController {
     return catalog.storeDetail(req.auth, id, lat && lng ? { lat: Number(lat), lng: Number(lng) } : undefined);
   }
   @Public() @Get('stores/:id/slots') slots(@Param('id') id: string) { return orders.listSlots(id); }
+  @Public() @Get('banners') banners(@Req() req: any, @Query('cityId') cityId: string) { return banners.activeBanners(req.auth, cityId); }
   @Public() @Get('products/:id') product(@Req() req: any, @Param('id') id: string) { return catalog.productDetail(req.auth, id); }
   @Public() @Get('search') search(@Req() req: any, @Query('cityId') cityId: string, @Query('q') q: string) { return catalog.search(req.auth, cityId, q); }
 }
@@ -214,6 +218,7 @@ export class MerchantController {
     res.type('text/csv; charset=utf-8').setHeader('Cache-Control', 'private, no-store');
     res.send(await merchant.exportCsv(a, id, f, t));
   }
+  @Roles(...MERCHANT) @Get('branches/:id/documents') docs(@Auth() a: AuthCtx, @Param('id') id: string) { return documents.listFor(a, 'branch', id); }
   @Roles('merchant_owner') @Post('branches/:id/operators') op(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return merchant.addOperator(a, id, parse(S.OperatorInput, b).email); }
 }
 
@@ -236,6 +241,7 @@ export class CourierController {
   @Roles('courier') @Post('deliveries/:orderId/deliver') @HttpCode(200) deliver(@Auth() a: AuthCtx, @Param('orderId') id: string, @Body() b: unknown) { return dispatch.deliver(a, id, parse(S.DeliverInput, b)); }
   @Roles('courier') @Post('deliveries/:orderId/fail') @HttpCode(200) fail(@Auth() a: AuthCtx, @Param('orderId') id: string, @Body() b: unknown) { return dispatch.failDelivery(a, id, parse(S.FailDeliveryInput, b)); }
   @Roles('courier') @Get('earnings') earnings(@Auth() a: AuthCtx) { return dispatch.earnings(a); }
+  @Roles('courier') @Get('documents') docs(@Auth() a: AuthCtx) { return documents.listFor(a, 'courier', a.userId); }
   @Roles('courier') @Get('history') history(@Auth() a: AuthCtx) { return dispatch.history(a); }
 }
 
@@ -288,6 +294,11 @@ export class AdminController {
   @Roles('admin', 'support_agent') @Post('incidents/:id/resolve') @HttpCode(200) resolve(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.resolveIncident(a, id, parse(S.IncidentResolveInput, b)); }
   @Roles('admin', 'support_agent') @Get('complaints') complaints() { return support.listComplaints(); }
   @Roles('admin', 'support_agent') @Post('complaints/:id/respond') @HttpCode(200) respond(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return support.respondComplaint(a, id, parse(S.ComplaintResponseInput, b).response); }
+  @Roles('admin') @Get('documents') documents() { return documents.reviewQueue(); }
+  @Roles('admin') @Post('documents/:id/review') @HttpCode(200) reviewDoc(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return documents.review(a, id, parse(S.DocumentReviewInput, b)); }
+  @Roles('admin') @Get('banners') banners() { return banners.listAll(); }
+  @Roles('admin') @Post('banners') banner(@Auth() a: AuthCtx, @Body() b: unknown) { return banners.create(a, parse(S.BannerInput, b)); }
+  @Roles('admin') @Patch('banners/:id') bannerPatch(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { const i = parse(S.BannerPatchInput, b); return banners.setActive(a, id, i.active, i.reason); }
   @Roles('admin') @Get('audit') audit() { return admin.auditLog(); }
   @Roles('admin') @Get('outbox') outbox() { return admin.outbox(); }
   @Roles('admin') @Post('roles') role(@Auth() a: AuthCtx, @Body() b: unknown) { return admin.grantRole(a, parse(S.RoleGrantInput, b)); }
@@ -320,22 +331,10 @@ export class OpsController {
     return { gauges: g, http: metrics.snapshot(), jobs: jobStats };
   }
 
-  /** Subida de archivos privados (evidencias/documentos): tamaño y tipo por firma de bytes. */
+  /** Subida de documentos/evidencias privados: titularidad verificada, tipo por firma de bytes, 5 MB. */
   @Post('files')
-  async upload(@Auth() a: AuthCtx, @Req() req: Request & { body: any }) {
-    const { purpose, ownerType, ownerId, contentBase64 } = req.body ?? {};
-    if (!['incident', 'merchant', 'branch', 'courier'].includes(ownerType) || typeof contentBase64 !== 'string') throw new BizError('VALIDATION', 'Datos inválidos', 400);
-    const buf = Buffer.from(contentBase64, 'base64');
-    if (buf.length === 0 || buf.length > 5 * 1024 * 1024) throw new BizError('FILE_SIZE', 'Archivo vacío o mayor a 5 MB', 413);
-    const type = sniffContentType(buf);
-    if (!type) throw new BizError('FILE_TYPE', 'Solo JPG, PNG, WEBP o PDF', 415);
-    const key = `${ownerType}/${ownerId ?? a.userId}/${randomToken(12)}`;
-    await storage().put(key, buf, type);
-    const d = await db.one(
-      `INSERT INTO documents(owner_type, owner_id, kind, storage_key, content_type, size_bytes, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [ownerType, ownerId ?? a.userId, String(purpose ?? 'evidencia').slice(0, 40), key, type, buf.length, a.userId],
-    );
-    return { id: d.id, contentType: type, size: buf.length };
+  upload(@Auth() a: AuthCtx, @Body() b: unknown) {
+    return documents.upload(a, parse(S.DocumentUploadInput, b));
   }
 
   @Get('files/:id/url')
@@ -343,6 +342,7 @@ export class OpsController {
     const d = await db.maybe(`SELECT * FROM documents WHERE id = $1`, [id]);
     const staff = a.roles.has('admin') || a.roles.has('support_agent');
     if (!d || (d.uploaded_by !== a.userId && !staff)) throw new BizError('NOT_FOUND', 'Archivo no encontrado', 404);
+    if (staff && d.uploaded_by !== a.userId) await tx((t) => auditLog(t, a, 'document.viewed', 'document', id, null));
     return { url: await storage().signedUrl(d.storage_key, 5), expiresInMinutes: 5 };
   }
 

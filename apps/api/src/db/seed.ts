@@ -296,6 +296,14 @@ export async function seedDemo(t: Tx, opts: { password?: string } = {}): Promise
     [tgm.id],
   );
 
+  await t.q(
+    `INSERT INTO banners(city_id, title, body, conditions, link_branch_id, contains_alcohol, starts_at, ends_at, is_demo) VALUES
+     ($1,'Envío gratis en Tingo María','Usa el cupón ENVIOGRATIS en tu pedido','Dato de demostración. Compra mínima S/ 20.00, 2 usos por persona, hasta agotar presupuesto.',NULL,false, now() - interval '1 day', now() + interval '90 days', true),
+     ($2,'Combo refrescante a S/ 10.00','2 gaseosas 500 ml + papas en Minimarket Puente','Dato de demostración. Precio por separado comprobable en la ficha del combo.',$3,false, now() - interval '1 day', now() + interval '90 days', true),
+     ($2,'Combo piqueo con cervezas','2 latas de 355 ml + chifles','Solo mayores de 18 años verificados. Dato de demostración. Tomar bebidas alcohólicas en exceso es dañino.',$3,true, now() - interval '1 day', now() + interval '90 days', true)`,
+    [tgm.id, agu.id, b2],
+  );
+
   // Feriados nacionales 2026 (a verificar con fuente oficial antes de operar).
   for (const [d, n] of [['2026-01-01', 'Año Nuevo'], ['2026-04-02', 'Jueves Santo'], ['2026-04-03', 'Viernes Santo'], ['2026-05-01', 'Día del Trabajo'], ['2026-06-07', 'Batalla de Arica y Día de la Bandera'], ['2026-06-29', 'San Pedro y San Pablo'], ['2026-07-23', 'Día de la Fuerza Aérea'], ['2026-07-28', 'Fiestas Patrias'], ['2026-07-29', 'Fiestas Patrias'], ['2026-08-06', 'Batalla de Junín'], ['2026-08-30', 'Santa Rosa de Lima'], ['2026-10-08', 'Combate de Angamos'], ['2026-11-01', 'Todos los Santos'], ['2026-12-08', 'Inmaculada Concepción'], ['2026-12-09', 'Batalla de Ayacucho'], ['2026-12-25', 'Navidad'], ['2027-01-01', 'Año Nuevo']]) {
     await t.q(`INSERT INTO peru_holidays(day, name) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [d, `${n} (verificar)`]);

@@ -134,3 +134,32 @@ test('comercio cerrado y dirección fuera de cobertura', async ({ page }) => {
   });
   await expect(page.getByText(/fuera de la zona de reparto/)).toBeVisible();
 });
+
+test('criterio 22: sin conexión no se confirma nada; al reconectar manda el servidor', async ({ page, context }) => {
+  await login(page, 'cliente.tingo@demo.aquisito.local');
+  const countOrders = async () => page.evaluate(async () => (await (await fetch('/api/orders', { headers: { 'x-client': 'web' } })).json()).length as number);
+  const before = await countOrders();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Tingo María' }).click();
+  await page.getByRole('link', { name: /Cevichería Río/ }).click();
+  await page.getByRole('button', { name: 'Agregar Leche de tigre' }).click();
+  await page.getByRole('button', { name: /^Agregar · S\/ 15\.00/ }).click();
+  await expect(page.getByText('Producto agregado al carrito')).toBeVisible();
+  await page.goto('/carrito');
+  await page.getByLabel(/Efectivo contra entrega/).check();
+  const confirm = page.getByRole('button', { name: /Confirmar pedido/ });
+  await expect(confirm).toBeEnabled();
+
+  await context.setOffline(true);
+  await expect(page.getByText(/Sin conexión\. Mostramos lo último/)).toBeVisible();
+  await confirm.click();
+  await expect(page.getByText(/Sin conexión\. Revisa tu red/)).toBeVisible();
+
+  await context.setOffline(false);
+  expect(await countOrders()).toBe(before); // nada se creó localmente ni en el servidor
+  await expect(page.getByText(/Sin conexión\. Mostramos lo último/)).toHaveCount(0);
+  // Reintento tras reconectar: un solo pedido (misma clave de idempotencia).
+  await page.getByRole('button', { name: /Confirmar pedido/ }).click();
+  await page.waitForURL(/\/pedidos\//);
+  expect(await countOrders()).toBe(before + 1);
+});

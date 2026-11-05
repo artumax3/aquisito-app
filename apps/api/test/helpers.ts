@@ -168,3 +168,9 @@ export async function cleanup(c: Ctx) {
   await db.q(`UPDATE deliveries SET status = 'ended', ended_at = now(), end_reason = 'limpieza de prueba' WHERE status = 'active'`);
   await db.q(`UPDATE delivery_offers SET status = 'cancelled' WHERE status = 'offered'`);
 }
+
+/** Procesa el outbox hasta vaciarlo (las pruebas acumulan eventos de casos anteriores). */
+export async function drainOutbox() {
+  const { processOutbox } = await import('../src/modules/notifications/notifications.service');
+  for (let i = 0; i < 100; i++) if ((await processOutbox(200)) === 0) return;
+}

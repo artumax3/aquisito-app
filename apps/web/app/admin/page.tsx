@@ -4,9 +4,10 @@ import { useState } from 'react';
 import type { CityDto } from '@aquisito/contracts';
 import { ApiError, api, errorMessage, useQuery, useRealtime } from '@/lib/api';
 import { ActionButton, Empty, ErrorBox, Loading, Money, StatusBadge, useSession } from '@/components/ui';
+import { kindLabel } from '@/components/upload';
 
-type Tab = 'dash' | 'orders' | 'couriers' | 'merchants' | 'age' | 'cities' | 'promos' | 'finance' | 'support' | 'privacy' | 'audit';
-const TABS: [Tab, string][] = [['dash', 'Indicadores'], ['orders', 'Pedidos y despacho'], ['couriers', 'Repartidores'], ['merchants', 'Comercios'], ['age', 'Verificación de edad'], ['cities', 'Ciudades, zonas y alcohol'], ['promos', 'Cupones'], ['finance', 'Finanzas'], ['support', 'Incidencias y reclamaciones'], ['privacy', 'Datos personales'], ['audit', 'Auditoría y eventos']];
+type Tab = 'dash' | 'orders' | 'couriers' | 'merchants' | 'docs' | 'age' | 'cities' | 'promos' | 'banners' | 'finance' | 'support' | 'privacy' | 'audit';
+const TABS: [Tab, string][] = [['dash', 'Indicadores'], ['orders', 'Pedidos y despacho'], ['couriers', 'Repartidores'], ['merchants', 'Comercios'], ['docs', 'Documentos'], ['age', 'Verificación de edad'], ['cities', 'Ciudades, zonas y alcohol'], ['promos', 'Cupones'], ['banners', 'Banners'], ['finance', 'Finanzas'], ['support', 'Incidencias y reclamaciones'], ['privacy', 'Datos personales'], ['audit', 'Auditoría y eventos']];
 
 export default function AdminPage() {
   const { me, has, loading } = useSession();
@@ -28,6 +29,8 @@ export default function AdminPage() {
       {tab === 'age' && <AgeQueue />}
       {tab === 'cities' && <Cities />}
       {tab === 'promos' && <Coupons />}
+      {tab === 'banners' && <Banners />}
+      {tab === 'docs' && <Documents />}
       {tab === 'finance' && <Finance />}
       {tab === 'support' && <Support />}
       {tab === 'privacy' && <Privacy />}
@@ -420,5 +423,62 @@ function Audit() {
       <h2>Eventos (outbox)</h2>
       <Guard q={o}><div className="table-wrap"><table><thead><tr><th>#</th><th>Tema</th><th>Intentos</th><th>Estado</th></tr></thead><tbody>{o.data?.slice(0, 100).map((x) => <tr key={x.id}><td>{x.id}</td><td>{x.topic}</td><td>{x.attempts}</td><td>{x.dead_at ? <span className="badge danger">fallido: {x.last_error}</span> : x.processed_at ? 'procesado' : 'pendiente'}</td></tr>)}</tbody></table></div></Guard>
     </div>
+  );
+}
+
+function Documents() {
+  const q = useQuery<any[]>('adminDocuments');
+  const [reason, setReason] = useState('Documento revisado manualmente; coincide con el titular');
+  const [exp, setExp] = useState<Record<string, string>>({});
+  return (
+    <Guard q={q}>
+      <p className="muted small">Revisión manual: no equivale a validación oficial ante la entidad emisora. Los documentos vencidos suspenden automáticamente la habilitación de alcohol.</p>
+      <input value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Motivo" />
+      {!q.data?.length && <Empty>Sin documentos.</Empty>}
+      {q.data?.map((d) => (
+        <div key={d.id} className="card row" style={{ justifyContent: 'space-between' }}>
+          <span>{d.ownerName} · {d.ownerType} · <strong>{kindLabel(d.kind)}</strong> · <span className="badge">{d.status}</span> {d.expiresAt ? `· vence ${d.expiresAt}` : ''}</span>
+          <span className="row">
+            <ActionButton className="sm ghost" onClick={async () => { const r = await api.call('fileUrl', { params: { id: d.id } }); window.open(r.url.startsWith('http') ? r.url : `/api${r.url}`, '_blank', 'noopener'); }}>Ver (enlace 5 min)</ActionButton>
+            {d.status === 'pending' && (
+              <>
+                <input type="date" value={exp[d.id] ?? d.expiresAt ?? ''} onChange={(e) => setExp({ ...exp, [d.id]: e.target.value })} style={{ maxWidth: 160 }} aria-label="Vencimiento" />
+                <ActionButton className="sm" onClick={async () => { await api.call('adminReviewDocument', { params: { id: d.id }, body: { approve: true, reason, expiresAt: exp[d.id] || undefined } }); q.reload(); }}>Aprobar</ActionButton>
+                <ActionButton className="sm warn" onClick={async () => { await api.call('adminReviewDocument', { params: { id: d.id }, body: { approve: false, reason } }); q.reload(); }}>Rechazar</ActionButton>
+              </>
+            )}
+          </span>
+        </div>
+      ))}
+    </Guard>
+  );
+}
+
+function Banners() {
+  const q = useQuery<any[]>('adminBanners');
+  const cities = useQuery<CityDto[]>('cities');
+  const [f, setF] = useState({ cityId: '', title: '', body: '', conditions: '', days: '30', containsAlcohol: false });
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <Guard q={q}>
+      <div className="card col">
+        <h2>Nuevo banner</h2>
+        <select value={f.cityId} onChange={(e) => setF({ ...f, cityId: e.target.value })}><option value="">Todas las ciudades</option>{cities.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <input placeholder="Título" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
+        <input placeholder="Texto" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
+        <input placeholder="Condiciones visibles (vigencia, mínimos, cupos)" value={f.conditions} onChange={(e) => setF({ ...f, conditions: e.target.value })} />
+        <input placeholder="Días de vigencia" value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} />
+        <label className="check"><input type="checkbox" checked={f.containsAlcohol} onChange={(e) => setF({ ...f, containsAlcohol: e.target.checked })} /> Promociona bebidas alcohólicas (solo se mostrará a adultos verificados)</label>
+        {err && <div className="alert error">{err}</div>}
+        <button className="btn" onClick={async () => { setErr(null); try { await api.call('adminCreateBanner', { body: { cityId: f.cityId || undefined, title: f.title, body: f.body, conditions: f.conditions, containsAlcohol: f.containsAlcohol, startsAt: new Date().toISOString(), endsAt: new Date(Date.now() + Number(f.days) * 86400000).toISOString() } }); q.reload(); } catch (e) { setErr(errorMessage(e)); } }}>Crear</button>
+        <p className="muted small">No dirigir campañas a menores ni incentivar consumo excesivo. Las condiciones deben ser verificables.</p>
+      </div>
+      {q.data?.map((b) => (
+        <div key={b.id} className="card row" style={{ justifyContent: 'space-between' }}>
+          <span><strong>{b.title}</strong> · {b.conditions} {b.containsAlcohol && <span className="badge adult">18+</span>} {b.isDemo && <span className="badge warn">demo</span>}</span>
+          <ActionButton className="sm ghost" onClick={async () => { await api.call('adminPatchBanner', { params: { id: b.id }, body: { active: !b.active, reason: b.active ? 'Desactivado desde el panel' : 'Reactivado desde el panel' } }); q.reload(); }}>{b.active ? 'Desactivar' : 'Activar'}</ActionButton>
+        </div>
+      ))}
+    </Guard>
   );
 }

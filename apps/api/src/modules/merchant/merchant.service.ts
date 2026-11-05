@@ -33,7 +33,7 @@ export async function myBranches(a: AuthCtx) {
   const merchantIds = a.memberships.filter((m) => m.role === 'merchant_owner').map((m) => m.merchant_id);
   const branchIds = a.memberships.filter((m) => m.role === 'branch_operator').map((m) => m.branch_id);
   return db.q(
-    `SELECT b.id, b.name, b.status, b.paused, b.pause_reason, b.city_id, c.name AS city_name, m.trade_name, m.status AS merchant_status, b.sells_alcohol, b.alcohol_permit_status, b.prep_minutes,
+    `SELECT b.id, b.merchant_id, b.name, b.status, b.paused, b.pause_reason, b.city_id, c.name AS city_name, m.trade_name, m.status AS merchant_status, b.sells_alcohol, b.alcohol_permit_status, b.prep_minutes,
        (b.merchant_id = ANY($1::uuid[])) AS is_owner
      FROM branches b JOIN merchants m ON m.id = b.merchant_id JOIN cities c ON c.id = b.city_id
      WHERE b.merchant_id = ANY($1::uuid[]) OR b.id = ANY($2::uuid[]) ORDER BY b.name`,

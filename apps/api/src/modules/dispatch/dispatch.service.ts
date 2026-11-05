@@ -408,7 +408,24 @@ export async function updateLocation(a: AuthCtx, input: { lat: number; lng: numb
     [a.userId, input.lng, input.lat, input.accuracyM, recorded],
   );
   void c;
+  await maybeNotifyNearby(a.userId);
   return { ok: true };
+}
+
+/** Aviso único de proximidad al cliente cuando el repartidor está a < 400 m del destino. */
+async function maybeNotifyNearby(courierId: string) {
+  const near = await db.maybe(
+    `SELECT o.id FROM deliveries d JOIN orders o ON o.id = d.order_id JOIN courier_locations l ON l.courier_id = d.courier_id
+     WHERE d.courier_id = $1 AND d.status = 'active' AND o.delivery_status = 'en_camino_al_cliente'
+       AND ST_DWithin(l.location::geography, o.destination::geography, 400)
+       AND NOT EXISTS (SELECT 1 FROM order_nearby_notices n WHERE n.order_id = o.id)`,
+    [courierId],
+  );
+  if (!near) return;
+  await tx(async (t) => {
+    const ins = await t.maybe(`INSERT INTO order_nearby_notices(order_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING order_id`, [near.id]);
+    if (ins) await emit(t, 'courier.nearby', near.id, { orderId: near.id });
+  });
 }
 
 export async function setAvailability(a: AuthCtx, available: boolean) {

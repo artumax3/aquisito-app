@@ -9,6 +9,7 @@ import { applyProviderResult, executePendingRefunds, reconcilePending } from './
 import { cancelOrderTx } from './modules/orders/lifecycle';
 import { lockOrder } from './modules/orders/state';
 import { paymentProvider } from './providers/payments';
+import { expireDocuments } from './modules/documents/documents.service';
 
 /**
  * Vencimiento de pagos: ANTES de cancelar se consulta al proveedor (recuperación segura). Si el
@@ -75,6 +76,7 @@ export const JOBS: Record<string, () => Promise<unknown>> = {
   reconcile: () => reconcilePending(60),
   refunds: executePendingRefunds,
   complaintAlerts,
+  expireDocuments,
 };
 
 /** Ejecuta todos los jobs una vez (usado por pruebas y por el bucle). */
