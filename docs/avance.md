@@ -21,18 +21,16 @@
 - Documentación: decisiones, trazabilidad, estados (generado), finanzas, indicadores, política de edad, integraciones, costos, manuales, borradores legales, despliegue, diseño.
 
 ## Bloqueos (requieren acción del titular)
-1. **Push a GitHub**: el acceso de esta sesión al repositorio `artumax3/aquisito-app` devuelve 403 (la app de GitHub de Claude no está instalada/vinculada para ese repositorio). Los commits existen localmente en la rama `claude/delivery-platform-peru-pv8mev`.
-2. Contrato y llaves de pasarela (Culqi u otra) y validación del modelo marketplace.
-3. Proveedor de SMS con remitente para Perú; proveedor de correo.
-4. Proyecto EAS / Android SDK y dispositivos para compilación nativa y prueba de segundo plano; cuentas de Google Play y Apple.
-5. Reglas horarias de alcohol verificadas (fuente, fecha, responsable) y habilitaciones de comercios.
-6. Polígonos reales y tarifas/comisiones del negocio.
-7. Proveedor de facturación electrónica; datos del titular (RUC, razón social) para Libro de Reclamaciones y comprobantes.
-8. Elección de proveedor de despliegue y base gestionada con PostGIS.
+1. Contrato y llaves de pasarela (Culqi u otra) y validación del modelo marketplace.
+2. Proveedor de SMS con remitente para Perú; proveedor de correo.
+3. Proyecto EAS / Android SDK y dispositivos para compilación nativa y prueba de segundo plano; cuentas de Google Play y Apple.
+4. Reglas horarias de alcohol verificadas (fuente, fecha, responsable) y habilitaciones de comercios.
+5. Polígonos reales y tarifas/comisiones del negocio.
+6. Proveedor de facturación electrónica; datos del titular (RUC, razón social) para Libro de Reclamaciones y comprobantes.
+7. Elección de proveedor de despliegue y base gestionada con PostGIS.
 
 ## Siguiente paso recomendado
-1. Resolver el acceso de GitHub y publicar la rama.
-2. Compilar `courier-mobile` con `expo run:android` en un dispositivo Android de gama media y verificar ubicación en segundo plano (registrar modelo, versión de Android y resultados).
-3. Desplegar un entorno de ensayo (staging) con Culqi en modo prueba y repetir la prueba de carga allí.
-4. Optimizar `listStores` (consulta única para horarios y tarifas) y `priceItems` (carga por lotes).
-5. Añadir mapa nativo (react-native-maps o MapLibre) y SSE/WebSocket en móvil.
+1. Compilar `courier-mobile` con `expo run:android` en un dispositivo Android de gama media y verificar ubicación en segundo plano (registrar modelo, versión de Android y resultados).
+2. Desplegar un entorno de ensayo (staging) con Culqi en modo prueba y repetir la prueba de carga allí.
+3. Optimizar `listStores` (consulta única para horarios y tarifas) y `priceItems` (carga por lotes).
+4. Añadir mapa nativo (react-native-maps o MapLibre) y SSE/WebSocket en móvil.
