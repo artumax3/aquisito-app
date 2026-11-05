@@ -591,7 +591,7 @@ describe('23/24 cancelaciones, reembolsos y cupones', () => {
     const clients = await Promise.all(users.map((e) => as(c, e)));
     const addrs = await Promise.all([ids.customer_aguaytia, ids.customer_noverificado, ids.customer_revocado].map(async (u) => (await db.one(`SELECT id FROM addresses WHERE user_id = $1 AND label = 'Casa'`, [u])).id));
     const v = await variantOf(ids.branch_sazon, 'Juane de gallina');
-    const quotes = [];
+    const quotes: any[] = [];
     for (const [i, cl] of clients.entries()) {
       await cl.put('/cart', { branchId: ids.branch_sazon, items: [{ variantId: v, quantity: 1 }], replaceOtherBranch: true });
       const q = await cl.post('/checkout/quotes', { addressId: addrs[i], paymentMethod: 'card', tipCents: 0, couponCode: 'UNICO' });

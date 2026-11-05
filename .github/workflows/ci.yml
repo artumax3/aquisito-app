@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/aquisito_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: psql postgres://postgres:postgres@localhost:5432/postgres -c "CREATE DATABASE aquisito_test" -c "CREATE DATABASE aquisito_e2e"
+      - run: pnpm build:packages
+      - run: pnpm -r typecheck
+      - run: pnpm --filter @aquisito/contracts test
+      - run: pnpm --filter @aquisito/api build && pnpm --filter @aquisito/api test
+      - run: pnpm --filter @aquisito/web build
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: pnpm --filter @aquisito/web test:e2e
+      - run: npx expo export --platform android --output-dir dist-export
+        working-directory: apps/customer-mobile
+      - run: npx expo export --platform android --output-dir dist-export
+        working-directory: apps/courier-mobile
+      - run: bash infra/scripts/restore-drill.sh
+        env: { PGHOST: localhost, PGUSER: postgres, PGPASSWORD: postgres }

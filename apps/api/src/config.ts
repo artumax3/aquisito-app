@@ -49,6 +49,8 @@ const Env = z.object({
   S3_ENDPOINT: z.string().default(''),
   S3_ACCESS_KEY_ID: z.string().default(''),
   S3_SECRET_ACCESS_KEY: z.string().default(''),
+  /** Límite por IP y minuto (ventana fija, por proceso). Complementar con límite en el proxy/CDN. */
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().default(600),
   JOBS_ENABLED: bool.default(true),
   JOBS_INTERVAL_MS: z.coerce.number().default(3000),
   ALLOW_DEMO_SEED: bool.default(true),
@@ -59,8 +61,24 @@ export type AppConfig = z.infer<typeof Env> & { isProd: boolean; isDevLike: bool
 
 let cached: AppConfig | null = null;
 
+/** Carga .env (raíz del monorepo y apps/api) sin sobrescribir variables ya definidas. */
+function loadDotEnv() {
+  const { existsSync, readFileSync } = require('fs') as typeof import('fs');
+  const { join } = require('path') as typeof import('path');
+  for (const file of [join(__dirname, '..', '.env'), join(__dirname, '..', '..', '..', '.env')]) {
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (!m || process.env[m[1]] !== undefined) continue;
+      process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = Env.parse(env);
+  // Variables vacías se tratan como no definidas (usan su valor por defecto).
+  const clean = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
+  const parsed = Env.parse(clean);
   const cfg = {
     ...parsed,
     isProd: parsed.APP_ENV === 'production',
@@ -71,7 +89,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 }
 
 export function config(): AppConfig {
-  if (!cached) cached = loadConfig();
+  if (!cached) {
+    if (process.env.APP_ENV !== 'test') loadDotEnv();
+    cached = loadConfig();
+  }
   return cached;
 }
 

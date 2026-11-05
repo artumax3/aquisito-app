@@ -67,7 +67,7 @@ export async function createApp(): Promise<INestApplication> {
     });
     next();
   });
-  app.use(rateLimit(600));
+  app.use(rateLimit(config().RATE_LIMIT_PER_MINUTE));
   // Cuerpo crudo para verificar firmas de webhooks; límite de tamaño.
   app.use(json({ limit: '7mb', verify: (req: any, _res, buf) => { if (req.url?.startsWith('/webhooks/')) req.rawBody = Buffer.from(buf); } }));
   await app.init();

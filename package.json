@@ -2,7 +2,9 @@
   "name": "aquisito",
   "private": true,
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "pnpm -r --filter ./packages/** run build && pnpm --filter @aquisito/api run build && pnpm --filter @aquisito/web run build",
     "build:packages": "pnpm -r --filter ./packages/** run build",
@@ -14,5 +16,11 @@
     "test": "pnpm --filter @aquisito/contracts run test && pnpm --filter @aquisito/api run test",
     "test:e2e": "pnpm --filter @aquisito/web run test:e2e",
     "openapi": "pnpm --filter @aquisito/api run openapi"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "19.1.0",
+      "react-dom": "19.1.0"
+    }
   }
 }

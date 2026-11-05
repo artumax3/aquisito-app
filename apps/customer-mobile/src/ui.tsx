@@ -47,7 +47,7 @@ export const P = ({ children, muted }: { children: ReactNode; muted?: boolean })
 export const Field = (p: TextInputProps & { label: string }) => (
   <View style={{ gap: 4 }}>
     <Text style={s.label}>{p.label}</Text>
-    <TextInput placeholderTextColor="#7c8681" {...p} style={s.input} />
+    <TextInput placeholderTextColor="#646d69" {...p} style={s.input} />
   </View>
 );
 export const Badge = ({ text, tone = 'ok' }: { text: string; tone?: 'ok' | 'warn' | 'bad' | 'adult' }) => (

@@ -11,7 +11,8 @@
     "db:seed": "node dist/db/seed-cli.js",
     "openapi": "node dist/openapi-cli.js",
     "test": "vitest run --no-file-parallelism",
-    "db:reset": "node dist/db/reset-cli.js"
+    "db:reset": "node dist/db/reset-cli.js",
+    "docs": "node dist/docs-cli.js"
   },
   "dependencies": {
     "@aquisito/contracts": "workspace:*",
