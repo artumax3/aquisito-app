@@ -9,6 +9,12 @@ conectadas a un mismo backend con PostgreSQL + PostGIS.
 > verificación de identidad y facturación electrónica requieren credenciales/contratos externos
 > (ver `docs/integraciones.md`). Todos los datos de demostración son ficticios.
 
+## Documentos clave
+
+- **[`docs/PENDIENTES.md`](docs/PENDIENTES.md)**: lo que falta para operar, con pasos, responsables y verificación.
+- **[`docs/analisis-sistema.md`](docs/analisis-sistema.md)**: análisis de sistemas: actores, requisitos, reglas de negocio, casos de uso, diagramas (contexto, secuencia, estados, entidad-relación), matriz de permisos, arquitectura e interfaces.
+- `docs/decisiones.md`, `docs/trazabilidad.md`, `docs/informe-pruebas.md`, `docs/estados.md`, `docs/openapi.json`.
+
 ## Estructura
 
 ```

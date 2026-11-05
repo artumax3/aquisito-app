@@ -914,6 +914,10 @@ describe('operación financiera: liquidaciones, efectivo y reembolsos manuales',
   it('rendición de efectivo exacta y saldo por rendir en cero', async () => {
     const fin = await as(c, E.finance, true);
     const courier = await as(c, E.rTgm1);
+    // Un despachador solo ve el efectivo de repartidores de su ciudad.
+    const dispAgu = await as(c, E.dispAgu);
+    expect((await dispAgu.get(`/admin/couriers/${ids.courierTingo1}/cash`)).status).toBe(404);
+    expect((await (await as(c, E.dispTgm)).get(`/admin/couriers/${ids.courierTingo1}/cash`)).status).toBe(200);
     const pending = (await fin.get(`/admin/couriers/${ids.courierTingo1}/cash`)).body;
     expect(pending.pendingCents).toBeGreaterThan(0);
     const bad = await fin.post(`/admin/couriers/${ids.courierTingo1}/cash-remittance`, { amountCents: pending.pendingCents - 1, reference: 'DEP-1' });

@@ -287,7 +287,7 @@ export class AdminController {
   @Roles('finance') @Post('settlements/:id/approve') @HttpCode(200) approveS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.approveSettlement(a, id, parse(S.ReasonInput, b).reason); }
   @Roles('finance') @Post('settlements/:id/execute') @HttpCode(200) executeS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.executeSettlement(a, id, parse(S.SettlementExecuteInput, b)); }
   @Roles('finance') @Post('settlements/:id/void') @HttpCode(200) voidS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.voidSettlement(a, id, parse(S.ReasonInput, b).reason); }
-  @Roles('finance', 'admin', 'city_dispatcher') @Get('couriers/:id/cash') cash(@Param('id') id: string) { return admin.courierCash(id); }
+  @Roles('finance', 'admin', 'city_dispatcher') @Get('couriers/:id/cash') cash(@Auth() a: AuthCtx, @Param('id') id: string) { return admin.courierCash(a, id); }
   @Roles('finance') @Post('couriers/:id/cash-remittance') @HttpCode(200) remit(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.cashRemittance(a, id, parse(S.CashRemittanceInput, b)); }
   @Roles('admin', 'finance') @Post('payments/reconcile') @HttpCode(200) reconcile() { return payments.reconcilePending(0); }
   @Roles('finance', 'admin') @Get('settlements') settlements() { return admin.settlements(); }
