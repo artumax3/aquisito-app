@@ -529,7 +529,10 @@ export async function voidSettlement(a: AuthCtx, id: string, reason: string) {
   });
 }
 
-export async function courierCash(courierId: string) {
+export async function courierCash(a: AuthCtx, courierId: string) {
+  const c = await db.maybe(`SELECT city_id FROM couriers WHERE user_id = $1`, [courierId]);
+  if (!c) throw new BizError('NOT_FOUND', 'Repartidor no encontrado', 404);
+  assertCityScope(a, c.city_id, ['admin', 'finance', 'city_dispatcher']);
   const rows = await db.q(
     `SELECT cc.order_id, o.number, cc.amount_due_cents, cc.collected_cents, cc.collected_at FROM cash_collections cc JOIN orders o ON o.id = cc.order_id
      WHERE cc.courier_id = $1 AND cc.remitted_at IS NULL ORDER BY cc.collected_at`,
