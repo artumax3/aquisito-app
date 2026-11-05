@@ -8,6 +8,7 @@ import { api, tokenStore } from './api';
 import { startBackground, startForeground, stopBackground } from './location';
 import { Badge, Banner, Btn, C, Card, Field, H, P, s } from './ui';
 import { registerPush } from './push';
+import { MapWeb } from './MapWeb';
 
 export default function App() {
   const [me, setMe] = useState<MeDto | null>(null);
@@ -155,6 +156,7 @@ function Active({ d, reload }: { d: CourierDeliveryDto; reload: () => void }) {
       <H>Pedido #{d.orderNumber}</H>
       <Badge text={(LABELS.delivery as any)[st]} tone="warn" />
       <Banner tone="warn" text="Opera con el vehículo detenido." />
+      <MapWeb center={{ lat: d.branch.lat, lng: d.branch.lng }} markers={[{ lat: d.branch.lat, lng: d.branch.lng, label: d.branch.name }, { lat: d.customer.lat, lng: d.customer.lng, label: 'Cliente', color: '#c2410c' }]} height={220} />
       <P>Recoger: {d.branch.name} · {d.branch.address}</P>
       <Btn kind="secondary" title="Navegar al comercio" onPress={() => nav(d.branch.lat, d.branch.lng)} />
       <P>Entregar: {d.customer.name} · {d.customer.address} {d.customer.reference ? `(${d.customer.reference})` : ''}</P>

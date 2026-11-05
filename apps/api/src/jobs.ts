@@ -67,6 +67,28 @@ export async function complaintAlerts(): Promise<number> {
   return rows.length;
 }
 
+/**
+ * Retención (propuesta a validar, docs/legal-borradores.md §6): borra ubicaciones de repartidores
+ * desconectados sin entrega activa, OTP/intentos de acceso de más de 30 días, restablecimientos
+ * vencidos y documentos con fecha de eliminación cumplida (también del almacenamiento).
+ */
+export async function retention() {
+  const loc = await db.q(
+    `DELETE FROM courier_locations l WHERE l.received_at < now() - interval '1 day'
+       AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.courier_id = l.courier_id AND d.status = 'active') RETURNING courier_id`,
+  );
+  const otp = await db.q(`DELETE FROM otp_challenges WHERE created_at < now() - interval '30 days' RETURNING id`);
+  const att = await db.q(`DELETE FROM login_attempts WHERE created_at < now() - interval '30 days' RETURNING id`);
+  const pr = await db.q(`DELETE FROM password_resets WHERE expires_at < now() - interval '30 days' RETURNING id`);
+  const docs = await db.q(`SELECT id, storage_key FROM documents WHERE delete_after IS NOT NULL AND delete_after < (now() AT TIME ZONE 'America/Lima')::date`);
+  const { storage } = await import('./providers/storage');
+  for (const d of docs) {
+    await storage().remove(d.storage_key).catch(() => undefined);
+    await db.q(`DELETE FROM documents WHERE id = $1`, [d.id]);
+  }
+  return { locations: loc.length, otp: otp.length, loginAttempts: att.length, passwordResets: pr.length, documents: docs.length };
+}
+
 export const JOBS: Record<string, () => Promise<unknown>> = {
   outbox: () => processOutbox(),
   expireUnpaid: expireUnpaidOrders,
@@ -77,13 +99,20 @@ export const JOBS: Record<string, () => Promise<unknown>> = {
   refunds: executePendingRefunds,
   complaintAlerts,
   expireDocuments,
+  retention,
 };
 
-/** Ejecuta todos los jobs una vez (usado por pruebas y por el bucle). */
+/** Jobs de baja frecuencia (ms entre ejecuciones dentro del bucle). */
+const SLOW: Record<string, number> = { retention: 3600_000, expireDocuments: 3600_000, complaintAlerts: 600_000 };
+const lastSlowRun = new Map<string, number>();
+
+/** Ejecuta los jobs una vez (usado por pruebas y por el bucle). Con `only`, sin restricción de frecuencia. */
 export async function runJobsOnce(only?: string[]) {
   const out: Record<string, unknown> = {};
   for (const [name, fn] of Object.entries(JOBS)) {
     if (only && !only.includes(name)) continue;
+    if (!only && SLOW[name] && Date.now() - (lastSlowRun.get(name) ?? 0) < SLOW[name]) continue;
+    if (SLOW[name]) lastSlowRun.set(name, Date.now());
     out[name] = await fn();
   }
   return out;

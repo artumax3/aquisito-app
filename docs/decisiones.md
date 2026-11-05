@@ -38,7 +38,7 @@ Fecha de inicio: 2026-11-05 (America/Lima). Cada decisión puede revisarse; se i
 | T13 | Pagos: interfaz de proveedor (crear, consultar, verificar webhook, reembolsar). **Sandbox** = simulador con estado propio y webhooks HMAC (solo dev/test). **Culqi**: código escrito; la autenticidad del webhook se establece **consultando la operación a la API** (no se inventa una firma). Reembolsos se registran en la transacción y se ejecutan fuera de ella por un job. | — | Encargo §14. |
 | T14 | Libro de movimientos **inmutable** (trigger que impide UPDATE/DELETE) y `settlement_items.ledger_entry_id UNIQUE` para no liquidar dos veces. | — | Encargo §15. |
 | T15 | Rutas: adaptador `haversine × 1.3` etiquetado "aproximado" por defecto; adaptador OSRM para servidor propio. Mapas web: Leaflet con teselas configurables (OSM público solo en desarrollo). | Google Maps, Mapbox | Sin contrato aún; no se usa infraestructura pública gratuita como si fuera ilimitada. |
-| T16 | Apps móviles sin librería de navegación (estado propio) y sin mapa nativo embebido (enlace a mapa externo). | expo-router, react-native-maps | Menos configuración nativa en el primer corte; ampliar en la siguiente etapa. |
+| T16 | Apps móviles sin librería de navegación (estado propio). Mapas con **Leaflet dentro de `react-native-webview`**. | expo-router, react-native-maps, MapLibre | react-native-maps exige llave de Google en Android y MapLibre módulos nativos adicionales; WebView funciona sin llaves y con las mismas teselas configurables que la web. |
 | T17 | Archivos: almacenamiento privado (disco local en dev, S3 en prod) con **enlaces firmados de 5 min**; tipo validado por firma de bytes; 5 MB. Sin fotos de DNI por defecto. | — | Encargo §12B, §20. |
 | T18 | Web de repartidor (`/repartidor`) como **vista de apoyo** (y para pruebas E2E). La app principal es `courier-mobile`. | — | El encargo pide app móvil; la web no demuestra segundo plano. |
 
@@ -54,3 +54,14 @@ Fecha de inicio: 2026-11-05 (America/Lima). Cada decisión puede revisarse; se i
 8. Contratos con repartidores (independientes o no), seguros y capacitación.
 9. Proveedor de SMS, correo y mapas/rutas; presupuesto mensual.
 10. ¿Se habilita transferencia manual? ¿Cobro diferido en pedidos programados?
+
+## Iteraciones posteriores
+
+| # | Decisión | Motivo |
+|---|---|---|
+| T19 | Si un pago con tarjeta es rechazado, el pedido se cancela y se ofrece "Volver a pedir" (no se reintenta sobre el mismo pedido). | Mantiene la máquina de estados simple (fallido es terminal para el intento); reintentar es un toque. Revisar con el negocio. |
+| T20 | Liquidaciones con **cuatro ojos**: quien aprueba no puede ser quien generó; la ejecución solo registra la referencia de una transferencia externa. | §15: ejecución autorizada y trazable sin custodia de fondos. |
+| T21 | Rendición de efectivo solo por el **total pendiente** del repartidor. | Evita rendiciones parciales ambiguas; ajustes se registran aparte. |
+| T22 | Los reembolsos de pasarela solo se confirman con la respuesta del proveedor; la confirmación manual se limita a efectivo y transferencia. | §16. |
+| T23 | La habilitación de alcohol exige un documento de autorización aprobado y vigente; el permiso vence con el documento y un job lo suspende. | §12D. |
+| T24 | Pago digital en apps móviles deshabilitado (salvo simulador) hasta integrar el SDK del proveedor; la web sí tiene el checkout de Culqi. | No presentar como funcional un pago que no se puede completar en la app. |

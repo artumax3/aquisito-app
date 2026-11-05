@@ -10,6 +10,11 @@
 7. **Finanzas**: genera liquidaciones por período (son reproducibles y no duplican movimientos); concilia pagos inciertos; confirma transferencias solo con el abono real a la vista. Una captura no es confirmación.
 8. **Incidencias y reclamaciones**: resuelve indicando importes por concepto (productos, reparto, propina, servicio). Responde reclamaciones antes del vencimiento (alerta a 3 días).
 9. **Datos personales**: atiende solicitudes ARCO; la eliminación anonimiza y conserva pedidos y movimientos.
+10. **Configuración de ciudad**: edita el polígono de una zona marcando vértices en el mapa (se guarda como nueva versión), registra tarifas por ciudad o zona, ventanas de venta de alcohol (con fuente, fecha de revisión y responsable) y prohibiciones temporales.
+11. **Documentos**: revisa documentos de comercios y repartidores; fija el vencimiento al aprobar. La habilitación de alcohol requiere una autorización aprobada y vigente.
+12. **Liquidaciones**: generadas por una persona y aprobadas por otra; luego registra la referencia de la transferencia hecha fuera de la plataforma. Anula solo si no se ejecutó.
+13. **Efectivo**: registra la rendición total del efectivo cobrado por cada repartidor con la referencia del depósito o recibo.
+14. **Roles**: busca la cuenta por correo, otorga o revoca roles con motivo.
 
 ## Comercio (`/comercio`)
 1. Cada operador entra con **su propia cuenta** (el propietario los agrega por correo). No compartas contraseñas.
@@ -20,6 +25,8 @@
 6. **Combos**: define componentes y cantidades; consumen stock real. Muestra contenido exacto; el ahorro se calcula contra precios vigentes, no infles el precio de referencia.
 7. **Devoluciones**: al recibir un retorno, inspecciona y decide si vuelve a stock vendible.
 8. **Ventas**: reporte por período, exportación CSV y liquidaciones.
+9. **Documentos**: sube licencias y la autorización para alcohol (PDF o imagen, máx. 5 MB) con su fecha de vencimiento. Si vence, la venta de alcohol se suspende automáticamente.
+10. **Precios**: edita el precio en el catálogo; aplica a nuevas compras, no a pedidos ya confirmados.
 
 ## Repartidor (app `courier-mobile`; vista web `/repartidor` de apoyo)
 1. Conéctate solo cuando puedas atender pedidos; la ubicación se comparte mientras estás disponible o con una entrega activa. Desconéctate al terminar.

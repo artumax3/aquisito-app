@@ -1,4 +1,5 @@
 'use client';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState } from 'react';
 import type { CityDto } from '@aquisito/contracts';
@@ -6,8 +7,10 @@ import { ApiError, api, errorMessage, useQuery, useRealtime } from '@/lib/api';
 import { ActionButton, Empty, ErrorBox, Loading, Money, StatusBadge, useSession } from '@/components/ui';
 import { kindLabel } from '@/components/upload';
 
-type Tab = 'dash' | 'orders' | 'couriers' | 'merchants' | 'docs' | 'age' | 'cities' | 'promos' | 'banners' | 'finance' | 'support' | 'privacy' | 'audit';
-const TABS: [Tab, string][] = [['dash', 'Indicadores'], ['orders', 'Pedidos y despacho'], ['couriers', 'Repartidores'], ['merchants', 'Comercios'], ['docs', 'Documentos'], ['age', 'Verificación de edad'], ['cities', 'Ciudades, zonas y alcohol'], ['promos', 'Cupones'], ['banners', 'Banners'], ['finance', 'Finanzas'], ['support', 'Incidencias y reclamaciones'], ['privacy', 'Datos personales'], ['audit', 'Auditoría y eventos']];
+const MapView = dynamic(() => import('@/components/map').then((m) => m.MapView), { ssr: false });
+
+type Tab = 'dash' | 'orders' | 'couriers' | 'merchants' | 'docs' | 'age' | 'cities' | 'promos' | 'banners' | 'finance' | 'support' | 'privacy' | 'roles' | 'audit';
+const TABS: [Tab, string][] = [['dash', 'Indicadores'], ['orders', 'Pedidos y despacho'], ['couriers', 'Repartidores'], ['merchants', 'Comercios'], ['docs', 'Documentos'], ['age', 'Verificación de edad'], ['cities', 'Ciudades, zonas y alcohol'], ['promos', 'Cupones'], ['banners', 'Banners'], ['finance', 'Finanzas'], ['support', 'Incidencias y reclamaciones'], ['privacy', 'Datos personales'], ['roles', 'Roles y accesos'], ['audit', 'Auditoría y eventos']];
 
 export default function AdminPage() {
   const { me, has, loading } = useSession();
@@ -27,13 +30,14 @@ export default function AdminPage() {
       {tab === 'couriers' && <Couriers />}
       {tab === 'merchants' && <Merchants />}
       {tab === 'age' && <AgeQueue />}
-      {tab === 'cities' && <Cities />}
+      {tab === 'cities' && <><Cities /><CityConfig /></>}
       {tab === 'promos' && <Coupons />}
       {tab === 'banners' && <Banners />}
       {tab === 'docs' && <Documents />}
-      {tab === 'finance' && <Finance />}
+      {tab === 'finance' && <><Finance /><FinanceOps /></>}
       {tab === 'support' && <Support />}
       {tab === 'privacy' && <Privacy />}
+      {tab === 'roles' && <RolesAdmin />}
       {tab === 'audit' && <Audit />}
     </section>
   );
@@ -373,6 +377,9 @@ function Support() {
             <div key={i.id} className="card col">
               <div className="row" style={{ justifyContent: 'space-between' }}><strong>Pedido #{i.number} · {i.kind}</strong><span className="badge">{i.status}</span></div>
               <span className="small">{i.description}</span>
+              {(i.evidence_document_ids ?? []).length > 0 && (
+                <div className="row">{i.evidence_document_ids.map((d: string, k: number) => <ActionButton key={d} className="sm ghost" onClick={async () => { const r = await api.call('fileUrl', { params: { id: d } }); window.open(r.url.startsWith('http') ? r.url : `/api${r.url}`, '_blank', 'noopener'); }}>{`Ver evidencia ${k + 1}`}</ActionButton>)}</div>
+              )}
               {i.status === 'open' ? (
                 <div className="row">
                   <input placeholder="Resolución" value={r.text} onChange={(e) => setRes({ ...res, [i.id]: { ...r, text: e.target.value } })} />
@@ -480,5 +487,190 @@ function Banners() {
         </div>
       ))}
     </Guard>
+  );
+}
+
+const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+function CityConfig() {
+  const cities = useQuery<CityDto[]>('cities');
+  const [cityId, setCityId] = useState('');
+  const zones = useQuery<any[]>(cityId ? 'cityZones' : null, { params: { id: cityId } });
+  const fees = useQuery<any[]>('adminFeeRules');
+  const [fee, setFee] = useState({ base: '4.00', includedM: '1500', perKm: '1.50', min: '10.00', surcharge: '0', surchargeLabel: '', maxM: '6000', zoneId: '', reason: '' });
+  const [rule, setRule] = useState({ jurisdictionId: '', weekdays: [1, 2, 3, 4, 5] as number[], start: '10:00', end: '22:00', source: '', reviewed: new Date().toISOString().slice(0, 10), responsible: '', validated: false });
+  const [black, setBlack] = useState({ jurisdictionId: '', startsAt: '', endsAt: '', reason: '', source: '' });
+  const [zoneId, setZoneId] = useState('');
+  const [pts, setPts] = useState<{ lat: number; lng: number }[]>([]);
+  const [zoneReason, setZoneReason] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const city = cities.data?.find((c) => c.id === cityId);
+  const juris = useQuery<any[]>('adminAlcoholRules');
+  const jurisdictions = [...new Map((juris.data ?? []).map((r) => [r.jurisdiction_id, r.jurisdiction])).entries()];
+  const zone = zones.data?.find((z) => z.id === zoneId);
+  const draft = pts.length >= 3 ? { type: 'Polygon', coordinates: [[...pts.map((p) => [p.lng, p.lat]), [pts[0].lng, pts[0].lat]]] } : null;
+  return (
+    <div className="col" style={{ marginTop: 12 }}>
+      <select value={cityId} onChange={(e) => { setCityId(e.target.value); setZoneId(''); setPts([]); }} aria-label="Ciudad a configurar">
+        <option value="">Configurar ciudad…</option>{cities.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      {msg && <div className="alert ok">{msg}</div>}
+      {city && (
+        <>
+          <div className="card col">
+            <h2>Editar polígono de zona (nueva versión)</h2>
+            <select value={zoneId} onChange={(e) => { setZoneId(e.target.value); setPts([]); }}><option value="">Zona…</option>{zones.data?.map((z) => <option key={z.id} value={z.id}>{z.name} (v{z.version})</option>)}</select>
+            {zone && (
+              <>
+                <span className="muted small">Haz clic en el mapa para marcar los vértices en orden (mínimo 3). La versión anterior se conserva en el historial; los pedidos en curso mantienen la versión con la que se cotizaron.</span>
+                <MapView center={city.center} polygons={[zone.geometry, ...(draft ? [draft] : [])]} markers={pts.map((p, i) => ({ ...p, label: `Vértice ${i + 1}`, color: '#c2410c' }))} onPick={(p) => setPts([...pts, p])} height={320} />
+                <div className="row">
+                  <button className="btn sm ghost" onClick={() => setPts(pts.slice(0, -1))} disabled={!pts.length}>Deshacer vértice</button>
+                  <input placeholder="Motivo del cambio" value={zoneReason} onChange={(e) => setZoneReason(e.target.value)} />
+                  <ActionButton className="sm" disabled={!draft || zoneReason.length < 3} onClick={async () => { const r = await api.call('adminZoneVersion', { params: { id: zoneId }, body: { geometry: draft as any, reason: zoneReason } }); setMsg(`Zona actualizada a la versión ${r.version}`); setPts([]); zones.reload(); }}>Guardar nueva versión</ActionButton>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="card col">
+            <h2>Tarifa de reparto</h2>
+            <div className="table-wrap"><table><thead><tr><th>Ámbito</th><th>Base</th><th>Incluye</th><th>Por km</th><th>Mínimo</th><th>Máx.</th></tr></thead>
+              <tbody>{fees.data?.filter((f) => f.city_id === cityId).map((f) => <tr key={f.id}><td>{f.branch_id ? 'sucursal' : f.zone_id ? 'zona' : 'ciudad'} {f.is_demo && <span className="badge warn">demo</span>}</td><td><Money cents={f.base_fee_cents} className="" /></td><td>{f.included_meters} m</td><td><Money cents={f.per_km_cents} className="" /></td><td><Money cents={f.min_order_cents} className="" /></td><td>{f.max_distance_meters} m</td></tr>)}</tbody></table></div>
+            <div className="row">
+              <select value={fee.zoneId} onChange={(e) => setFee({ ...fee, zoneId: e.target.value })} style={{ maxWidth: 200 }}><option value="">Toda la ciudad</option>{zones.data?.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}</select>
+              <label className="small">Base S/<input value={fee.base} onChange={(e) => setFee({ ...fee, base: e.target.value })} /></label>
+              <label className="small">Metros incluidos<input value={fee.includedM} onChange={(e) => setFee({ ...fee, includedM: e.target.value })} /></label>
+              <label className="small">S/ por km extra<input value={fee.perKm} onChange={(e) => setFee({ ...fee, perKm: e.target.value })} /></label>
+              <label className="small">Compra mínima S/<input value={fee.min} onChange={(e) => setFee({ ...fee, min: e.target.value })} /></label>
+              <label className="small">Recargo S/<input value={fee.surcharge} onChange={(e) => setFee({ ...fee, surcharge: e.target.value })} /></label>
+              <label className="small">Motivo del recargo<input value={fee.surchargeLabel} onChange={(e) => setFee({ ...fee, surchargeLabel: e.target.value })} placeholder="p. ej. lluvia" /></label>
+              <label className="small">Distancia máx. (m)<input value={fee.maxM} onChange={(e) => setFee({ ...fee, maxM: e.target.value })} /></label>
+            </div>
+            <input placeholder="Motivo (auditoría)" value={fee.reason} onChange={(e) => setFee({ ...fee, reason: e.target.value })} />
+            <ActionButton disabled={fee.reason.length < 3} onClick={async () => { await api.call('adminFeeRule', { body: { cityId, zoneId: fee.zoneId || undefined, baseFeeCents: Math.round(Number(fee.base) * 100), includedMeters: Number(fee.includedM), perKmCents: Math.round(Number(fee.perKm) * 100), minOrderCents: Math.round(Number(fee.min) * 100), surchargeCents: Math.round(Number(fee.surcharge) * 100), surchargeLabel: fee.surchargeLabel || undefined, maxDistanceMeters: Number(fee.maxM), reason: fee.reason } }); setMsg('Tarifa registrada (la más reciente y específica aplica a nuevas cotizaciones)'); fees.reload(); }}>Registrar tarifa</ActionButton>
+          </div>
+        </>
+      )}
+
+      <div className="card col">
+        <h2>Ventana de venta de alcohol</h2>
+        <p className="muted small">Solo con fuente normativa verificada, fecha de revisión y responsable. Marca "validada" únicamente si la fuente fue confirmada; en producción las no validadas no habilitan venta.</p>
+        <select value={rule.jurisdictionId} onChange={(e) => setRule({ ...rule, jurisdictionId: e.target.value })}><option value="">Jurisdicción…</option>{jurisdictions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+        <div className="row">{DAYS.map((d, i) => <label key={d} className="check small"><input type="checkbox" checked={rule.weekdays.includes(i)} onChange={(e) => setRule({ ...rule, weekdays: e.target.checked ? [...rule.weekdays, i] : rule.weekdays.filter((x) => x !== i) })} /> {d}</label>)}</div>
+        <div className="row"><input type="time" value={rule.start} onChange={(e) => setRule({ ...rule, start: e.target.value })} style={{ maxWidth: 140 }} /><input type="time" value={rule.end} onChange={(e) => setRule({ ...rule, end: e.target.value })} style={{ maxWidth: 140 }} /></div>
+        <input placeholder="Fuente (ordenanza, número, enlace)" value={rule.source} onChange={(e) => setRule({ ...rule, source: e.target.value })} />
+        <div className="row"><label className="small">Fecha de revisión<input type="date" value={rule.reviewed} onChange={(e) => setRule({ ...rule, reviewed: e.target.value })} /></label><input placeholder="Responsable" value={rule.responsible} onChange={(e) => setRule({ ...rule, responsible: e.target.value })} /></div>
+        <label className="check"><input type="checkbox" checked={rule.validated} onChange={(e) => setRule({ ...rule, validated: e.target.checked })} /> Fuente verificada y vigente</label>
+        <ActionButton disabled={!rule.jurisdictionId || rule.source.length < 3 || rule.responsible.length < 2 || !rule.weekdays.length} onClick={async () => { for (const w of rule.weekdays) await api.call('adminAlcoholRule', { body: { jurisdictionId: rule.jurisdictionId, weekday: w, start: rule.start, end: rule.end, source: rule.source, sourceReviewedAt: rule.reviewed, responsible: rule.responsible, validated: rule.validated } }); setMsg('Reglas registradas'); juris.reload(); }}>Registrar ventanas</ActionButton>
+        <h3>Prohibición temporal (p. ej. jornada electoral)</h3>
+        <select value={black.jurisdictionId} onChange={(e) => setBlack({ ...black, jurisdictionId: e.target.value })}><option value="">Jurisdicción…</option>{jurisdictions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+        <div className="row"><input type="datetime-local" value={black.startsAt} onChange={(e) => setBlack({ ...black, startsAt: e.target.value })} /><input type="datetime-local" value={black.endsAt} onChange={(e) => setBlack({ ...black, endsAt: e.target.value })} /></div>
+        <input placeholder="Motivo" value={black.reason} onChange={(e) => setBlack({ ...black, reason: e.target.value })} />
+        <input placeholder="Fuente normativa" value={black.source} onChange={(e) => setBlack({ ...black, source: e.target.value })} />
+        <ActionButton className="warn" disabled={!black.jurisdictionId || !black.startsAt || !black.endsAt || black.reason.length < 3 || black.source.length < 3} onClick={async () => { await api.call('adminAlcoholBlackout', { body: { jurisdictionId: black.jurisdictionId, startsAt: new Date(black.startsAt).toISOString(), endsAt: new Date(black.endsAt).toISOString(), reason: black.reason, source: black.source } }); setMsg('Prohibición registrada; ningún interruptor comercial la anula'); }}>Registrar prohibición</ActionButton>
+      </div>
+    </div>
+  );
+}
+
+function FinanceOps() {
+  const merchants = useQuery<any[]>('adminMerchants');
+  const couriers = useQuery<any[]>('adminCouriers');
+  const settlements = useQuery<any[]>('adminSettlements');
+  const refundsQ = useQuery<any[]>('adminRefunds', { query: { status: 'pending' } });
+  const [com, setCom] = useState({ merchantId: '', percent: '12', from: new Date().toISOString().slice(0, 10), reason: '' });
+  const [ref, setRef] = useState<Record<string, string>>({});
+  const [cash, setCash] = useState<{ courierId: string; data: any | null; reference: string }>({ courierId: '', data: null, reference: '' });
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <div className="col" style={{ marginTop: 12 }}>
+      {msg && <div className="alert ok">{msg}</div>}
+      <div className="card col">
+        <h2>Acciones sobre liquidaciones</h2>
+        <p className="muted small">Borrador → aprobada (por una persona distinta de quien la generó) → ejecutada (registro de la transferencia realizada fuera de la plataforma). Anular libera los movimientos para una nueva liquidación.</p>
+        {settlements.data?.filter((s) => s.status !== 'void').slice(0, 20).map((s) => (
+          <div key={s.id} className="row small" style={{ justifyContent: 'space-between' }}>
+            <span>{s.party_type} · {new Date(s.period_start).toLocaleDateString('es-PE')}–{new Date(s.period_end).toLocaleDateString('es-PE')} · <Money cents={s.total_cents} className="" /> · <span className="badge">{s.status}</span> {s.execution_reference ?? ''}</span>
+            <span className="row">
+              {s.status === 'draft' && <ActionButton className="sm" onClick={async () => { await api.call('adminApproveSettlement', { params: { id: s.id }, body: { reason: 'Revisado contra el libro' } }); settlements.reload(); }}>Aprobar</ActionButton>}
+              {s.status === 'approved' && <><input placeholder="Referencia bancaria" value={ref[s.id] ?? ''} onChange={(e) => setRef({ ...ref, [s.id]: e.target.value })} style={{ maxWidth: 180 }} /><ActionButton className="sm" disabled={(ref[s.id] ?? '').length < 3} onClick={async () => { await api.call('adminExecuteSettlement', { params: { id: s.id }, body: { reference: ref[s.id], reason: 'Transferencia realizada' } }); settlements.reload(); }}>Registrar ejecución</ActionButton></>}
+              {['draft', 'approved'].includes(s.status) && <ActionButton className="sm ghost" confirm="¿Anular la liquidación?" onClick={async () => { await api.call('adminVoidSettlement', { params: { id: s.id }, body: { reason: 'Anulada desde el panel' } }); settlements.reload(); }}>Anular</ActionButton>}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="card col">
+        <h2>Rendición de efectivo de repartidores</h2>
+        <div className="row">
+          <select value={cash.courierId} onChange={async (e) => { const id = e.target.value; setCash({ courierId: id, data: id ? await api.call('adminCourierCash', { params: { id } }) : null, reference: '' }); }}><option value="">Repartidor…</option>{couriers.data?.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}</select>
+          {cash.data && <span>Pendiente: <Money cents={cash.data.pendingCents} /> ({cash.data.collections.length} pedidos)</span>}
+        </div>
+        {cash.data?.pendingCents > 0 && (
+          <div className="row">
+            <input placeholder="Referencia del depósito o recibo" value={cash.reference} onChange={(e) => setCash({ ...cash, reference: e.target.value })} />
+            <ActionButton disabled={cash.reference.length < 3} onClick={async () => { const r = await api.call('adminCashRemittance', { params: { id: cash.courierId }, body: { amountCents: cash.data.pendingCents, reference: cash.reference } }); setMsg(`Rendición registrada: S/ ${(r.remittedCents / 100).toFixed(2)}`); setCash({ ...cash, data: await api.call('adminCourierCash', { params: { id: cash.courierId } }) }); }}>Registrar rendición total</ActionButton>
+          </div>
+        )}
+      </div>
+      <div className="card col">
+        <h2>Reembolsos pendientes</h2>
+        {!refundsQ.data?.length && <span className="muted small">No hay reembolsos pendientes.</span>}
+        {refundsQ.data?.map((r) => (
+          <div key={r.id} className="row small" style={{ justifyContent: 'space-between' }}>
+            <span>#{r.number} · <Money cents={r.amount_cents} className="" /> · {r.concept} · {r.provider} · {r.reason}</span>
+            {['cash', 'transfer'].includes(r.provider) ? (
+              <span className="row"><input placeholder="Referencia de la devolución" value={ref[r.id] ?? ''} onChange={(e) => setRef({ ...ref, [r.id]: e.target.value })} style={{ maxWidth: 200 }} /><ActionButton className="sm" disabled={(ref[r.id] ?? '').length < 3} onClick={async () => { await api.call('adminConfirmRefund', { params: { id: r.id }, body: { reference: ref[r.id] } }); refundsQ.reload(); }}>Confirmar devolución manual</ActionButton></span>
+            ) : <span className="muted">Se confirma con la respuesta del proveedor</span>}
+          </div>
+        ))}
+      </div>
+      <div className="card col">
+        <h2>Comisión por comercio</h2>
+        <div className="row">
+          <select value={com.merchantId} onChange={(e) => setCom({ ...com, merchantId: e.target.value })}><option value="">Comercio…</option>{merchants.data?.map((m) => <option key={m.id} value={m.id}>{m.trade_name}</option>)}</select>
+          <label className="small">Comisión %<input value={com.percent} onChange={(e) => setCom({ ...com, percent: e.target.value })} style={{ maxWidth: 90 }} /></label>
+          <label className="small">Vigente desde<input type="date" value={com.from} onChange={(e) => setCom({ ...com, from: e.target.value })} /></label>
+        </div>
+        <input placeholder="Motivo (contrato, adenda)" value={com.reason} onChange={(e) => setCom({ ...com, reason: e.target.value })} />
+        <ActionButton disabled={!com.merchantId || com.reason.length < 3} onClick={async () => { await api.call('adminCommission', { body: { merchantId: com.merchantId, percentBp: Math.round(Number(com.percent) * 100), validFrom: new Date(`${com.from}T00:00:00-05:00`).toISOString(), reason: com.reason } }); setMsg('Comisión registrada; aplica a pedidos creados desde la fecha indicada'); }}>Registrar comisión</ActionButton>
+      </div>
+    </div>
+  );
+}
+
+function RolesAdmin() {
+  const cities = useQuery<CityDto[]>('cities');
+  const merchants = useQuery<any[]>('adminMerchants');
+  const [email, setEmail] = useState('');
+  const [user, setUser] = useState<any>(null);
+  const [f, setF] = useState({ role: 'support_agent', cityId: '', merchantId: '', reason: '' });
+  const [err, setErr] = useState<string | null>(null);
+  const reloadUser = async () => setUser(await api.call('adminUsers', { query: { email } }));
+  const needsCity = ['city_dispatcher', 'courier'].includes(f.role);
+  return (
+    <div className="col">
+      <p className="muted small">Cada persona usa su propia cuenta. Los roles de administración y finanzas exigen verificación en dos pasos. Todo cambio queda en auditoría.</p>
+      <div className="row"><input type="email" placeholder="Correo exacto de la cuenta" value={email} onChange={(e) => setEmail(e.target.value)} /><button className="btn secondary" onClick={async () => { setErr(null); try { await reloadUser(); } catch (e) { setErr(errorMessage(e)); setUser(null); } }}>Buscar</button></div>
+      {err && <div className="alert error">{err}</div>}
+      {user && (
+        <div className="card col">
+          <strong>{user.fullName} · {user.email}</strong>
+          {user.memberships.map((m: any) => (
+            <div key={m.id} className="row small" style={{ justifyContent: 'space-between' }}>
+              <span>{m.role} {m.city_id ? `· ciudad ${cities.data?.find((c) => c.id === m.city_id)?.name ?? ''}` : ''} {m.merchant_id ? '· comercio' : ''} {m.branch_id ? '· sucursal' : ''}</span>
+              <ActionButton className="sm ghost" confirm="¿Revocar este acceso?" onClick={async () => { await api.call('adminRevokeRole', { params: { id: m.id }, body: { reason: 'Revocado desde el panel' } }); await reloadUser(); }}>Revocar</ActionButton>
+            </div>
+          ))}
+          <div className="row">
+            <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{['support_agent', 'city_dispatcher', 'finance', 'admin', 'merchant_owner'].map((r) => <option key={r}>{r}</option>)}</select>
+            {needsCity && <select value={f.cityId} onChange={(e) => setF({ ...f, cityId: e.target.value })}><option value="">Ciudad…</option>{cities.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}
+            {f.role === 'merchant_owner' && <select value={f.merchantId} onChange={(e) => setF({ ...f, merchantId: e.target.value })}><option value="">Comercio…</option>{merchants.data?.map((m) => <option key={m.id} value={m.id}>{m.trade_name}</option>)}</select>}
+          </div>
+          <input placeholder="Motivo" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
+          <ActionButton disabled={f.reason.length < 3 || (needsCity && !f.cityId) || (f.role === 'merchant_owner' && !f.merchantId)} onClick={async () => { await api.call('adminGrantRole', { body: { userId: user.id, role: f.role as any, cityId: f.cityId || undefined, merchantId: f.merchantId || undefined, reason: f.reason } }); await reloadUser(); }}>Otorgar rol</ActionButton>
+        </div>
+      )}
+    </div>
   );
 }

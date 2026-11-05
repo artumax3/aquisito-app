@@ -413,8 +413,10 @@ export async function resolveIncident(a: AuthCtx, id: string, input: { resolutio
 
 export async function confirmManualRefund(a: AuthCtx, refundId: string, reference: string) {
   const { confirmRefund } = await import('../payments/payments.service');
-  const r = await db.maybe(`SELECT * FROM refunds WHERE id = $1 AND status = 'pending'`, [refundId]);
+  const r = await db.maybe(`SELECT r.*, p.provider FROM refunds r LEFT JOIN payments p ON p.id = r.payment_id WHERE r.id = $1 AND r.status = 'pending'`, [refundId]);
   if (!r) throw new BizError('NOT_FOUND', 'Reembolso pendiente no encontrado', 404);
+  // Los reembolsos de pasarela se confirman SOLO con la respuesta del proveedor.
+  if (r.provider && !['cash', 'transfer'].includes(r.provider)) throw new BizError('PROVIDER_REFUND', 'Este reembolso lo confirma el proveedor de pagos, no una acción manual', 409);
   await confirmRefund(refundId, reference, a);
   return { confirmed: true };
 }
@@ -476,4 +478,101 @@ export async function exportOrdersCsv(a: AuthCtx, q: { cityId?: string; from?: s
   const head = `# Exportación Aquisito · ${new Date().toISOString()} · zona horaria ${LIMA} · ciudad=${q.cityId ?? 'todas'} desde=${from.toISOString()} hasta=${to.toISOString()} · sin datos personales\n`;
   const cols = 'pedido,fecha_local,ciudad,sucursal,estado_comercial,estado_reparto,estado_pago,medio,subtotal,descuento,envio,total,reembolsado\n';
   return head + cols + rows.map((r) => [r.number, localDate(r.created_at, LIMA), r.city, `"${r.branch}"`, r.commercial_status, r.delivery_status, r.payment_status, r.payment_method, ...[r.subtotal_cents, r.discount_cents, r.delivery_fee_cents, r.total_cents, r.refunded_cents].map((x) => (x / 100).toFixed(2))].join(',')).join('\n') + '\n';
+}
+
+// ---------- Reembolsos, liquidaciones y efectivo ----------
+export async function refunds(status?: string) {
+  return db.q(
+    `SELECT r.id, r.order_id, o.number, r.amount_cents, r.concept, r.reason, r.status, r.created_at, r.confirmed_at, coalesce(p.provider, o.payment_method) AS provider
+     FROM refunds r JOIN orders o ON o.id = r.order_id LEFT JOIN payments p ON p.id = r.payment_id
+     WHERE ($1::text IS NULL OR r.status = $1) ORDER BY r.created_at DESC LIMIT 200`,
+    [status ?? null],
+  );
+}
+
+/** Cuatro ojos: quien aprueba una liquidación no puede ser quien la generó. */
+export async function approveSettlement(a: AuthCtx, id: string, reason: string) {
+  return tx(async (t) => {
+    const s = await t.maybe(`SELECT * FROM settlements WHERE id = $1 FOR UPDATE`, [id]);
+    if (!s) throw new BizError('NOT_FOUND', 'Liquidación no encontrada', 404);
+    if (s.status !== 'draft') throw new BizError('INVALID_STATE', 'Solo se aprueban liquidaciones en borrador', 409);
+    if (s.created_by === a.userId) throw new BizError('FOUR_EYES', 'La aprobación debe hacerla una persona distinta de quien generó la liquidación', 403);
+    const re = await recomputeSettlement(t, id);
+    if (re.totalCents !== Number(s.total_cents)) throw new BizError('SETTLEMENT_INCONSISTENT', 'El total recalculado no coincide', 409);
+    await t.q(`UPDATE settlements SET status = 'approved' WHERE id = $1`, [id]);
+    await audit(t, a, 'settlement.approved', 'settlement', id, reason, { total: s.total_cents });
+    return settlementDetail(a, id, t);
+  });
+}
+
+/** Solo registra la ejecución externa (transferencia hecha por el titular); no mueve dinero. */
+export async function executeSettlement(a: AuthCtx, id: string, input: { reference: string; reason: string }) {
+  return tx(async (t) => {
+    const s = await t.maybe(`SELECT * FROM settlements WHERE id = $1 FOR UPDATE`, [id]);
+    if (!s) throw new BizError('NOT_FOUND', 'Liquidación no encontrada', 404);
+    if (s.status !== 'approved') throw new BizError('INVALID_STATE', 'Solo se ejecutan liquidaciones aprobadas', 409);
+    await t.q(`UPDATE settlements SET status = 'executed', execution_reference = $2 WHERE id = $1`, [id, input.reference]);
+    await audit(t, a, 'settlement.executed', 'settlement', id, input.reason, { reference: input.reference });
+    return settlementDetail(a, id, t);
+  });
+}
+
+export async function voidSettlement(a: AuthCtx, id: string, reason: string) {
+  return tx(async (t) => {
+    const s = await t.maybe(`SELECT * FROM settlements WHERE id = $1 FOR UPDATE`, [id]);
+    if (!s) throw new BizError('NOT_FOUND', 'Liquidación no encontrada', 404);
+    if (!['draft', 'approved'].includes(s.status)) throw new BizError('INVALID_STATE', 'Una liquidación ejecutada no se anula: registre un ajuste', 409);
+    const items = await t.q(`DELETE FROM settlement_items WHERE settlement_id = $1 RETURNING ledger_entry_id`, [id]);
+    await t.q(`UPDATE settlements SET status = 'void' WHERE id = $1`, [id]);
+    await audit(t, a, 'settlement.voided', 'settlement', id, reason, { releasedEntries: items.map((i) => i.ledger_entry_id) });
+    return { voided: true, releasedEntries: items.length };
+  });
+}
+
+export async function courierCash(courierId: string) {
+  const rows = await db.q(
+    `SELECT cc.order_id, o.number, cc.amount_due_cents, cc.collected_cents, cc.collected_at FROM cash_collections cc JOIN orders o ON o.id = cc.order_id
+     WHERE cc.courier_id = $1 AND cc.remitted_at IS NULL ORDER BY cc.collected_at`,
+    [courierId],
+  );
+  return { pendingCents: rows.reduce((a, r) => a + Number(r.amount_due_cents), 0), collections: rows };
+}
+
+/**
+ * Rendición de efectivo: el importe debe coincidir con todo lo pendiente (evita rendiciones
+ * parciales ambiguas). Asiento positivo que compensa los "courier_cash_held".
+ */
+export async function cashRemittance(a: AuthCtx, courierId: string, input: { amountCents: number; reference: string }) {
+  return tx(async (t) => {
+    await t.q(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`cash:${courierId}`]);
+    const c = await t.maybe(`SELECT city_id FROM couriers WHERE user_id = $1`, [courierId]);
+    if (!c) throw new BizError('NOT_FOUND', 'Repartidor no encontrado', 404);
+    assertCityScope(a, c.city_id, ['admin', 'finance']);
+    const pending = await t.q(`SELECT order_id, amount_due_cents FROM cash_collections WHERE courier_id = $1 AND remitted_at IS NULL FOR UPDATE`, [courierId]);
+    const total = pending.reduce((s, r) => s + Number(r.amount_due_cents), 0);
+    if (total === 0) throw new BizError('NOTHING_PENDING', 'No hay efectivo pendiente de rendir', 409);
+    if (input.amountCents !== total) throw new BizError('AMOUNT_MISMATCH', `El monto pendiente es S/ ${(total / 100).toFixed(2)}`, 422, { pendingCents: total });
+    await t.q(`UPDATE cash_collections SET remitted_at = now() WHERE courier_id = $1 AND remitted_at IS NULL`, [courierId]);
+    const { post } = await import('../finance/ledger.service');
+    await post(t, [{ orderId: null, partyType: 'courier', partyId: courierId, type: 'courier_cash_remitted', amount: total, description: `Rendición de efectivo (${pending.length} pedidos)`, reference: input.reference, dedupeKey: `cash_remit:${courierId}:${input.reference}`, createdBy: a.userId }]);
+    await audit(t, a, 'courier.cash_remitted', 'courier', courierId, null, { total, reference: input.reference, orders: pending.map((p) => p.order_id) });
+    return { remittedCents: total, orders: pending.length };
+  });
+}
+
+export async function findUser(email: string) {
+  const u = await db.maybe(`SELECT id, full_name, email FROM users WHERE email = $1 AND status = 'active'`, [email ?? '']);
+  if (!u) throw new BizError('NOT_FOUND', 'Cuenta no encontrada', 404);
+  const ms = await db.q(`SELECT id, role, city_id, merchant_id, branch_id, created_at FROM memberships WHERE user_id = $1 AND revoked_at IS NULL`, [u.id]);
+  return { id: u.id, fullName: u.full_name, email: u.email, memberships: ms };
+}
+
+export async function revokeRole(a: AuthCtx, membershipId: string, reason: string) {
+  return tx(async (t) => {
+    const m = await t.maybe(`UPDATE memberships SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL RETURNING user_id, role`, [membershipId]);
+    if (!m) throw new BizError('NOT_FOUND', 'Membresía no encontrada', 404);
+    if (m.user_id === a.userId && m.role === 'admin') throw new BizError('SELF_REVOKE', 'No puedes revocar tu propio rol de administrador', 403);
+    await audit(t, a, 'membership.revoked', 'user', m.user_id, reason, { role: m.role, membershipId });
+    return { revoked: true };
+  });
 }

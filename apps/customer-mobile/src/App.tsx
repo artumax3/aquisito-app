@@ -7,6 +7,7 @@ import type { CartDto, CityDto, MeDto, OrderDto, ProductDto, QuoteDto, StoreDeta
 import { api, tokenStore } from './api';
 import { Badge, Banner, Btn, C, Card, errorText, Field, H, P, s } from './ui';
 import { registerPush } from './push';
+import { MapWeb } from './MapWeb';
 import { Modal } from 'react-native';
 
 type Route = { name: 'home' } | { name: 'store'; id: string } | { name: 'cart' } | { name: 'orders' } | { name: 'order'; id: string } | { name: 'account' };
@@ -277,6 +278,8 @@ function Cart({ go }: { go: (r: Route) => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [terms, setTerms] = useState(false);
   const [idem] = useState(newIdempotencyKey());
+  const payCfg = useLoad<any>(() => api.call('paymentsConfig'));
+  const mobilePay = (m: 'card' | 'wallet' | 'cash') => m === 'cash' || !!payCfg.data?.[m]?.mobileCheckout;
   const addr = addressId ?? addresses.data?.find((a) => a.inCoverage)?.id ?? null;
   useEffect(() => {
     (async () => {
@@ -302,7 +305,11 @@ function Cart({ go }: { go: (r: Route) => void }) {
           <Pressable key={a.id} onPress={() => setAddressId(a.id)}><Text style={{ fontWeight: addr === a.id ? '800' : '400' }}>{addr === a.id ? '● ' : '○ '}{a.label}: {a.line1} {a.inCoverage ? '' : '(fuera de cobertura)'}</Text></Pressable>
         ))}
         <Text style={s.label}>Pago</Text>
-        {(['cash', 'card', 'wallet'] as const).map((m) => <Pressable key={m} onPress={() => setMethod(m)}><Text>{method === m ? '● ' : '○ '}{m === 'cash' ? 'Efectivo contra entrega' : m === 'card' ? 'Tarjeta (checkout del proveedor)' : 'Billetera móvil vía proveedor'}</Text></Pressable>)}
+        {(['cash', 'card', 'wallet'] as const).map((m) => (
+          <Pressable key={m} disabled={!mobilePay(m)} onPress={() => setMethod(m)}>
+            <Text style={{ color: mobilePay(m) ? C.ink900 : C.ink600 }}>{method === m ? '● ' : '○ '}{m === 'cash' ? 'Efectivo contra entrega' : m === 'card' ? 'Tarjeta' : 'Billetera móvil (Yape/Plin)'}{!mobilePay(m) ? ' — disponible en la web por ahora' : payCfg.data?.[m]?.simulator ? ' (simulador de desarrollo)' : ''}</Text>
+          </Pressable>
+        ))}
       </Card>
       {err && <Banner tone="bad" text={err} />}
       {quote && (
@@ -319,10 +326,7 @@ function Cart({ go }: { go: (r: Route) => void }) {
           )}
           <Btn title="Confirmar pedido" disabled={quote.containsAlcohol && !terms} onPress={async () => {
             const o = await api.call('createOrder', { idempotencyKey: idem, body: { quoteId: quote.id, quoteVersion: quote.version, alcoholTermsAccepted: terms } });
-            if (method !== 'cash') {
-              const p = await api.call('startPayment', { body: { orderId: o.id }, idempotencyKey: `pay-${o.id}` });
-              if (p.checkoutUrl && !p.simulated) await Linking.openURL(p.checkoutUrl);
-            }
+            if (method !== 'cash') await api.call('startPayment', { body: { orderId: o.id }, idempotencyKey: `pay-${o.id}` });
             go({ name: 'order', id: o.id });
           }} />
         </Card>
@@ -373,12 +377,17 @@ function Order({ id }: { id: string }) {
       <Badge text={(LABELS.commercial as any)[o.commercialStatus]} />
       <Badge text={(LABELS.delivery as any)[o.deliveryStatus]} tone="warn" />
       <Badge text={(LABELS.payment as any)[o.paymentStatus]} tone={o.paymentStatus === 'pagado' ? 'ok' : 'warn'} />
-      {o.paymentStatus === 'pendiente' && o.commercialStatus === 'pendiente_confirmacion' && <Banner tone="warn" text="Pago pendiente: se confirmará solo cuando el proveedor confirme el cobro." />}
+      {o.paymentStatus === 'pendiente' && o.commercialStatus === 'pendiente_confirmacion' && (
+        <Card>
+          <Banner tone="warn" text="Pago pendiente: se confirmará solo cuando el proveedor confirme el cobro." />
+          {o.latestPaymentId && <DevPay paymentId={o.latestPaymentId} onDone={order.reload} />}
+        </Card>
+      )}
       {tracking?.available && tracking.lat != null && (
         <Card>
           <P>Repartidor: {o.courier?.name ?? '—'}</P>
           <P muted>Última ubicación {new Date(tracking.recordedAt!).toLocaleTimeString('es-PE')} {tracking.stale ? '(desactualizada)' : ''}</P>
-          <Btn kind="secondary" title="Ver en el mapa" onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${tracking.lat}&mlon=${tracking.lng}#map=17/${tracking.lat}/${tracking.lng}`)} />
+          <MapWeb center={{ lat: tracking.lat, lng: tracking.lng! }} markers={[{ lat: tracking.lat, lng: tracking.lng!, label: 'Repartidor', color: '#f59e0b' }, ...(o.address ? [{ lat: o.address.lat, lng: o.address.lng, label: 'Tu dirección' }] : [])]} />
         </Card>
       )}
       {['recogido', 'en_camino_al_cliente', 'en_destino', 'verificacion_requerida'].includes(o.deliveryStatus) && (
@@ -420,10 +429,11 @@ function Account({ me, onLogout, refresh }: { me: MeDto; onLogout: () => Promise
           setPt({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy ?? 0 });
           setConfirmed(false);
         }} />
+        {cityId && <P muted>Toca el mapa para marcar el punto exacto de entrega (o usa tu ubicación).</P>}
+        {cityId && <MapWeb key={cityId} center={pt ?? cities.data!.find((c) => c.id === cityId)!.center} markers={pt ? [{ lat: pt.lat, lng: pt.lng, label: 'Punto de entrega', color: '#c2410c' }] : []} onPick={(p) => { setPt({ ...p, acc: 0 }); setConfirmed(false); }} height={260} />}
         {pt && (
           <>
-            <P muted>Punto: {pt.lat.toFixed(5)}, {pt.lng.toFixed(5)} (±{Math.round(pt.acc)} m)</P>
-            <Btn kind="secondary" title="Revisar el punto en el mapa" onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${pt.lat}&mlon=${pt.lng}#map=18/${pt.lat}/${pt.lng}`)} />
+            <P muted>Punto: {pt.lat.toFixed(5)}, {pt.lng.toFixed(5)}{pt.acc ? ` (±${Math.round(pt.acc)} m)` : ' (marcado en el mapa)'}</P>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Switch value={confirmed} onValueChange={setConfirmed} /><P>Confirmo que este es el punto de entrega</P></View>
           </>
         )}
@@ -466,5 +476,18 @@ function AgeVerification({ me, refresh }: { me: MeDto; refresh: () => Promise<vo
       <Btn title="Solicitar verificación" disabled={!consent} onPress={async () => { await api.call('requestAgeVerification', { body: { documentType: docType, documentLast4: last4, fullNameOnDocument: name, birthDate: birth, consent: true } }); setMsg('Solicitud enviada; te avisaremos el resultado.'); await refresh(); }} />
       {msg && <Banner text={msg} />}
     </Card>
+  );
+}
+
+/** Botones del simulador de pagos: solo aparecen si el pago usa el proveedor "sandbox" (desarrollo). */
+function DevPay({ paymentId, onDone }: { paymentId: string; onDone: () => void }) {
+  const p = useLoad<any>(() => api.call('payment', { params: { id: paymentId } }), [paymentId]);
+  if (!p.data?.simulated) return null;
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ fontWeight: '800', color: '#8a4b06' }}>SIMULADOR DE PAGOS — SOLO DESARROLLO</Text>
+      <Btn title="Simular pago aprobado" onPress={async () => { await api.call('simulatePayment', { params: { id: paymentId }, body: { outcome: 'paid' } }); onDone(); }} />
+      <Btn kind="danger" title="Simular rechazo" onPress={async () => { await api.call('simulatePayment', { params: { id: paymentId }, body: { outcome: 'failed' } }); onDone(); }} />
+    </View>
   );
 }

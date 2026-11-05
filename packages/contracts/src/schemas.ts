@@ -419,6 +419,17 @@ export const BannerInput = z.object({
 });
 export const BannerPatchInput = z.object({ active: z.boolean(), reason: z.string().min(3).max(300) });
 
+export const SettlementExecuteInput = z.object({
+  /** Referencia de la transferencia bancaria realizada fuera de la plataforma. */
+  reference: z.string().min(3).max(80),
+  reason: z.string().min(3).max(300),
+});
+export const CashRemittanceInput = z.object({
+  amountCents: cents.min(1),
+  reference: z.string().min(3).max(80),
+});
+export const ManualRefundConfirmInput = z.object({ reference: z.string().min(3).max(80) });
+
 // ---------- Libro de reclamaciones ----------
 export const ComplaintInput = z.object({
   consumerName: z.string().min(2).max(150),

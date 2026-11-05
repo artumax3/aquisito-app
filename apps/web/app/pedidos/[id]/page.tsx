@@ -6,6 +6,7 @@ import type { OrderDto, TrackingDto } from '@aquisito/contracts';
 import { LABELS } from '@aquisito/contracts';
 import { api, useQuery, useRealtime } from '@/lib/api';
 import { ActionButton, ErrorBox, Loading, Money, StatusBadge } from '@/components/ui';
+import { openCulqiCheckout } from '@/components/culqi';
 
 const MapView = dynamic(() => import('@/components/map').then((m) => m.MapView), { ssr: false });
 const ACTIVE = ['asignado', 'en_camino_al_comercio', 'recogido', 'en_camino_al_cliente', 'en_destino', 'verificacion_requerida'];
@@ -14,12 +15,14 @@ export default function OrderPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const order = useQuery<OrderDto>('order', { params: { id } });
+  const payCfg = useQuery<any>('paymentsConfig');
   const payment = useQuery<any>(order.data?.latestPaymentId ? 'payment' : null, { params: { id: order.data?.latestPaymentId ?? '' } }, [order.data?.version]);
   const [tracking, setTracking] = useState<TrackingDto | null>(null);
   const [code, setCode] = useState<{ code: string; note: string } | null>(null);
   const messages = useQuery<any[]>('orderMessages', { params: { id } });
   const [msg, setMsg] = useState('');
   const [incident, setIncident] = useState({ kind: 'missing_item', description: '' });
+  const [evidence, setEvidence] = useState<File | null>(null);
   const [rating, setRating] = useState({ storeScore: 5, courierScore: 5, comment: '' });
   const [info, setInfo] = useState<string | null>(null);
 
@@ -80,7 +83,22 @@ export default function OrderPage() {
               </div>
             </div>
           )}
-          {!o.latestPaymentId && <ActionButton onClick={async () => { await api.call('startPayment', { body: { orderId: o.id }, idempotencyKey: `pay-${o.id}` }); order.reload(); }}>Iniciar pago</ActionButton>}
+          {payCfg.data && !payCfg.data[o.paymentMethod]?.simulator && (
+            payCfg.data[o.paymentMethod]?.publicKey ? (
+              <ActionButton onClick={async () => {
+                const cfg = payCfg.data[o.paymentMethod];
+                if (o.paymentMethod === 'card') {
+                  const r = await openCulqiCheckout({ publicKey: cfg.publicKey, amountCents: o.totalCents, title: `Pedido #${o.number}` });
+                  await api.call('startPayment', { body: { orderId: o.id, providerToken: r.token }, idempotencyKey: `pay-${o.id}` });
+                } else {
+                  const p = await api.call('startPayment', { body: { orderId: o.id }, idempotencyKey: `pay-${o.id}` });
+                  await openCulqiCheckout({ publicKey: cfg.publicKey, amountCents: o.totalCents, title: `Pedido #${o.number}`, orderReference: p.checkoutReference });
+                }
+                order.reload();
+              }}>{o.paymentMethod === 'card' ? 'Pagar con tarjeta' : 'Pagar con Yape / Plin'}</ActionButton>
+            ) : <div className="alert warn small">El proveedor de pagos aún no está configurado en este entorno.</div>
+          )}
+          {payCfg.data?.[o.paymentMethod]?.simulator && !o.latestPaymentId && <ActionButton onClick={async () => { await api.call('startPayment', { body: { orderId: o.id }, idempotencyKey: `pay-${o.id}` }); order.reload(); }}>Iniciar pago</ActionButton>}
         </div>
       )}
       {o.paymentStatus === 'en_conciliacion' && <div className="alert warn">Estamos confirmando tu pago con el proveedor. No vuelvas a pagar: no se hará un nuevo cargo hasta conciliar.</div>}
@@ -175,7 +193,18 @@ export default function OrderPage() {
             <option value="other">Otro</option>
           </select>
           <textarea value={incident.description} onChange={(e) => setIncident({ ...incident, description: e.target.value })} placeholder="Cuéntanos qué pasó" />
-          <ActionButton disabled={incident.description.length < 3} onClick={async () => { await api.call('reportIncident', { params: { id: o.id }, body: { ...incident, evidenceFileIds: [] } }); setInfo('Reporte enviado. Soporte te responderá por los mensajes del pedido.'); setIncident({ ...incident, description: '' }); }}>Enviar reporte</ActionButton>
+          <label className="small">Foto de evidencia (opcional, máx. 5 MB; solo la ve soporte)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setEvidence(e.target.files?.[0] ?? null)} /></label>
+          <ActionButton disabled={incident.description.length < 3} onClick={async () => {
+            const ids: string[] = [];
+            if (evidence) {
+              const b64 = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] ?? ''); r.onerror = () => rej(r.error); r.readAsDataURL(evidence); });
+              ids.push((await api.call('uploadFile', { body: { ownerType: 'incident', ownerId: o.id, contentBase64: b64 } })).id);
+            }
+            await api.call('reportIncident', { params: { id: o.id }, body: { ...incident, evidenceFileIds: ids } });
+            setInfo('Reporte enviado. Soporte te responderá por los mensajes del pedido.');
+            setIncident({ ...incident, description: '' });
+            setEvidence(null);
+          }}>Enviar reporte</ActionButton>
           <span className="muted small">¿Quieres registrar un reclamo formal? Usa el <a href="/reclamaciones">Libro de Reclamaciones</a>.</span>
         </div>
       </details>

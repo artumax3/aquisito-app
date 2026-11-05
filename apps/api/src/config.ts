@@ -33,6 +33,7 @@ const Env = z.object({
   TWILIO_ACCOUNT_SID: z.string().default(''),
   TWILIO_AUTH_TOKEN: z.string().default(''),
   TWILIO_FROM: z.string().default(''),
+  TWILIO_API_URL: z.string().default('https://api.twilio.com'),
   /** Push: none | expo */
   PUSH_PROVIDER: z.string().default('none'),
   EXPO_ACCESS_TOKEN: z.string().default(''),

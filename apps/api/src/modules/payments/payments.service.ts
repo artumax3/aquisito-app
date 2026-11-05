@@ -12,6 +12,21 @@ import { requestRefund } from './refunds';
 import { cancelOrderTx } from '../orders/lifecycle';
 import { alcoholSaleCheck } from '../alcohol/alcohol.service';
 
+/** Configuración pública de cobro (nunca incluye llaves secretas). */
+export function publicPaymentsConfig() {
+  const c = config();
+  const enabled = c.PAYMENT_PROVIDERS.split(',').map((x) => x.trim());
+  const describe = (name: string) => ({
+    provider: name,
+    enabled: enabled.includes(name),
+    simulator: name === 'sandbox',
+    publicKey: name === 'culqi' ? c.CULQI_PUBLIC_KEY || null : null,
+    // El checkout de Culqi corre en navegador (Culqi Checkout JS). En apps móviles queda pendiente su SDK.
+    mobileCheckout: name === 'sandbox',
+  });
+  return { card: describe(c.CARD_PROVIDER), wallet: describe(c.WALLET_PROVIDER), cash: { enabled: true }, transfer: { enabled: c.TRANSFER_PAYMENTS_ENABLED } };
+}
+
 function paymentDto(p: any) {
   return {
     id: p.id,
@@ -24,6 +39,8 @@ function paymentDto(p: any) {
     expiresAt: p.expires_at,
     failureReason: p.failure_reason,
     simulated: p.provider === 'sandbox',
+    // Referencia de la orden del proveedor (p. ej. ord_… de Culqi) para abrir su checkout de billeteras.
+    checkoutReference: p.provider === 'culqi' && p.provider_reference?.startsWith('ord_') ? p.provider_reference : null,
   };
 }
 

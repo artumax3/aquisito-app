@@ -7,20 +7,41 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "pe.aquisito.provisional.repartidor",
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
     },
     "ios": {
       "bundleIdentifier": "pe.aquisito.provisional.repartidor",
       "infoPlist": {
-        "UIBackgroundModes": ["location"],
-        "NSLocationWhenInUseUsageDescription": "Compartimos tu ubicación con el cliente y despacho solo mientras estás disponible o con una entrega activa.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Para seguir la entrega con la pantalla apagada mientras estás disponible. Puedes desactivarlo al desconectarte."
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Compartimos tu ubicaci\u00f3n con el cliente y despacho solo mientras est\u00e1s disponible o con una entrega activa.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Para seguir la entrega con la pantalla apagada mientras est\u00e1s disponible. Puedes desactivarlo al desconectarte."
       }
     },
     "plugins": [
       "expo-secure-store",
-      ["expo-location", { "isAndroidBackgroundLocationEnabled": true, "isAndroidForegroundServiceEnabled": true, "locationAlwaysAndWhenInUsePermission": "Para seguir la entrega con la pantalla apagada mientras estás disponible." }]
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "locationAlwaysAndWhenInUsePermission": "Para seguir la entrega con la pantalla apagada mientras est\u00e1s disponible."
+        }
+      ]
     ],
-    "extra": { "apiUrl": "http://10.0.2.2:4000" }
+    "extra": {
+      "apiUrl": "http://10.0.2.2:4000",
+      "mapTileUrl": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      "eas": {
+        "projectId": null
+      }
+    }
   }
 }

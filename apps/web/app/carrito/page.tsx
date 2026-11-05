@@ -67,7 +67,10 @@ export default function CartPage() {
         body: { quoteId: quote.id, quoteVersion: quote.version, alcoholTermsAccepted: terms, invoice: { type: invoice.type, docType: invoice.type === 'factura' ? 'ruc' : invoice.docNumber ? 'dni' : undefined, docNumber: invoice.docNumber, name: invoice.name }, cashChangeForCents: method === 'cash' && cashFor ? Math.round(Number(cashFor) * 100) : undefined },
       });
       if (method === 'card' || method === 'wallet') {
-        await api.call('startPayment', { body: { orderId: order.id }, idempotencyKey: `pay-${order.id}` });
+        // Con el simulador de desarrollo se inicia el pago aquí; con un proveedor real el pago se
+        // completa en el checkout del proveedor desde la página del pedido.
+        const cfg = await api.call('paymentsConfig');
+        if (cfg[method].simulator) await api.call('startPayment', { body: { orderId: order.id }, idempotencyKey: `pay-${order.id}` });
       }
       router.push(`/pedidos/${order.id}`);
     } catch (e) {

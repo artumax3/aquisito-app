@@ -366,15 +366,48 @@ export async function priceItems(
   const categoryKinds = new Set<string>();
   const add = (sku: string | null, q: number) => sku && demand.set(sku, (demand.get(sku) ?? 0) + q);
 
-  for (const [index, it] of items.entries()) {
-    const v = await t.maybe(
-      `SELECT v.*, p.id AS product_id, p.name AS product_name, p.kind, p.branch_id, p.active AS product_active, p.contains_alcohol AS p_alcohol,
-              p.combo_valid_from, p.combo_valid_to, p.combo_daily_start, p.combo_daily_end, p.combo_quota_total, p.combo_quota_used, p.combo_per_customer_limit,
-              r.contains_alcohol AS eff_alcohol, r.minimum_age AS eff_age, s.contains_alcohol AS sku_alcohol, c.kind AS category_kind
-       FROM product_variants v JOIN products p ON p.id = v.product_id JOIN v_product_restriction r ON r.product_id = p.id
-       JOIN categories c ON c.id = p.category_id LEFT JOIN skus s ON s.id = v.sku_id WHERE v.id = $1`,
-      [it.variantId],
+  // Precarga por lotes: variantes, grupos/opciones de adicionales, componentes y opciones de combo.
+  const variantRows = items.length
+    ? await t.q(
+        `SELECT v.*, p.id AS product_id, p.name AS product_name, p.kind, p.branch_id, p.active AS product_active, p.contains_alcohol AS p_alcohol,
+                p.combo_valid_from, p.combo_valid_to, p.combo_daily_start, p.combo_daily_end, p.combo_quota_total, p.combo_quota_used, p.combo_per_customer_limit,
+                r.contains_alcohol AS eff_alcohol, r.minimum_age AS eff_age, s.contains_alcohol AS sku_alcohol, c.kind AS category_kind
+         FROM product_variants v JOIN products p ON p.id = v.product_id JOIN v_product_restriction r ON r.product_id = p.id
+         JOIN categories c ON c.id = p.category_id LEFT JOIN skus s ON s.id = v.sku_id WHERE v.id = ANY($1)`,
+        [[...new Set(items.map((i) => i.variantId))]],
+      )
+    : [];
+  const variantById = new Map(variantRows.map((v) => [v.id, v]));
+  const productIds = [...new Set(variantRows.map((v) => v.product_id))];
+  const allGroups = productIds.length ? await t.q(`SELECT * FROM modifier_groups WHERE product_id = ANY($1)`, [productIds]) : [];
+  const optionIds = [...new Set(items.flatMap((i) => i.modifierOptionIds))];
+  const allOptions = optionIds.length
+    ? await t.q(`SELECT o.*, s.contains_alcohol AS sku_alcohol, s.minimum_age FROM modifier_options o LEFT JOIN skus s ON s.id = o.sku_id WHERE o.id = ANY($1) AND o.active`, [optionIds])
+    : [];
+  const comboIds = variantRows.filter((v) => v.kind === 'combo').map((v) => v.product_id);
+  const allComps = comboIds.length ? await t.q(`SELECT * FROM combo_components WHERE combo_product_id = ANY($1) ORDER BY sort`, [comboIds]) : [];
+  const allEligible = allComps.length
+    ? await t.q(
+        `SELECT co.component_id, v2.id, v2.sku_id, v2.sku_units, v2.price_cents, p2.name AS pname, v2.name AS vname, p2.active AND v2.active AS ok,
+                coalesce(s.contains_alcohol, false) OR p2.contains_alcohol AS alcohol, coalesce(s.minimum_age, p2.minimum_age) AS min_age
+         FROM combo_component_options co JOIN product_variants v2 ON v2.id = co.variant_id JOIN products p2 ON p2.id = v2.product_id
+         LEFT JOIN skus s ON s.id = v2.sku_id WHERE co.component_id = ANY($1)`,
+        [allComps.map((c) => c.id)],
+      )
+    : [];
+  const limited = variantRows.filter((v) => v.kind === 'combo' && v.combo_per_customer_limit).map((v) => v.product_id);
+  const usedByProduct = new Map<string, number>();
+  if (limited.length && opts.userId) {
+    const rows = await t.q(
+      `SELECT l.product_id, coalesce(sum(l.quantity),0)::int AS n FROM order_lines l JOIN orders o ON o.id = l.order_id
+       WHERE o.user_id = $1 AND l.product_id = ANY($2) AND o.commercial_status NOT IN ('cancelado','rechazado_comercio') GROUP BY l.product_id`,
+      [opts.userId, limited],
     );
+    for (const r of rows) usedByProduct.set(r.product_id, r.n);
+  }
+
+  for (const [index, it] of items.entries()) {
+    const v = variantById.get(it.variantId);
     // Restringido sin acceso: se trata como inexistente (no filtra existencia por API).
     if (!v || v.branch_id !== branchId || ((v.eff_alcohol || v.category_kind === 'alcohol') && !restricted)) {
       throw new BizError('ITEM_NOT_FOUND', 'Uno de los productos no está disponible en esta sucursal', 422, { index });
@@ -386,13 +419,8 @@ export async function priceItems(
     let minAge: number | null = v.eff_age ?? (alcohol ? 18 : null);
 
     // Adicionales
-    const groups = await t.q(`SELECT * FROM modifier_groups WHERE product_id = $1`, [v.product_id]);
-    const opts2 = it.modifierOptionIds.length
-      ? await t.q(
-          `SELECT o.*, s.contains_alcohol AS sku_alcohol, s.minimum_age FROM modifier_options o LEFT JOIN skus s ON s.id = o.sku_id WHERE o.id = ANY($1) AND o.active`,
-          [it.modifierOptionIds],
-        )
-      : [];
+    const groups = allGroups.filter((g) => g.product_id === v.product_id);
+    const opts2 = allOptions.filter((o) => it.modifierOptionIds.includes(o.id));
     if (opts2.length !== new Set(it.modifierOptionIds).size || opts2.some((o) => !groups.find((g) => g.id === o.group_id)))
       throw new BizError('INVALID_MODIFIER', 'Adicional no válido para este producto', 422, { index });
     for (const g of groups) {
@@ -413,15 +441,8 @@ export async function priceItems(
     const comboSelections: Record<string, string> = {};
     if (v.kind === 'combo') {
       if (!comboInPeriod(v, at, tz)) problem = 'Combo fuera de su período u horario';
-      const comps = await t.q(`SELECT * FROM combo_components WHERE combo_product_id = $1 ORDER BY sort`, [v.product_id]);
-      for (const c of comps) {
-        const eligible = await t.q(
-          `SELECT v2.id, v2.sku_id, v2.sku_units, v2.price_cents, p2.name AS pname, v2.name AS vname, p2.active AND v2.active AS ok,
-                  coalesce(s.contains_alcohol, false) OR p2.contains_alcohol AS alcohol, coalesce(s.minimum_age, p2.minimum_age) AS min_age
-           FROM combo_component_options co JOIN product_variants v2 ON v2.id = co.variant_id JOIN products p2 ON p2.id = v2.product_id
-           LEFT JOIN skus s ON s.id = v2.sku_id WHERE co.component_id = $1`,
-          [c.id],
-        );
+      for (const c of allComps.filter((x) => x.combo_product_id === v.product_id)) {
+        const eligible = allEligible.filter((e) => e.component_id === c.id);
         const chosenId = it.comboSelections[c.id] ?? (eligible.length === 1 ? eligible[0].id : undefined);
         const chosen = eligible.find((e) => e.id === chosenId);
         if (!chosen) throw new BizError('COMBO_SELECTION_REQUIRED', `Elige una opción para "${c.label}"`, 422, { index, componentId: c.id });
@@ -437,12 +458,8 @@ export async function priceItems(
       if (v.combo_quota_total && v.combo_quota_used + it.quantity > v.combo_quota_total) problem = 'Cupo del combo agotado';
       comboUsage.set(v.product_id, (comboUsage.get(v.product_id) ?? 0) + it.quantity);
       if (v.combo_per_customer_limit && opts.userId) {
-        const used = await t.one(
-          `SELECT coalesce(sum(l.quantity),0)::int AS n FROM order_lines l JOIN orders o ON o.id = l.order_id
-           WHERE o.user_id = $1 AND l.product_id = $2 AND o.commercial_status NOT IN ('cancelado','rechazado_comercio')`,
-          [opts.userId, v.product_id],
-        );
-        if (used.n + (comboUsage.get(v.product_id) ?? 0) > v.combo_per_customer_limit) problem = `Límite de ${v.combo_per_customer_limit} por cliente para este combo`;
+        const used = usedByProduct.get(v.product_id) ?? 0;
+        if (used + (comboUsage.get(v.product_id) ?? 0) > v.combo_per_customer_limit) problem = `Límite de ${v.combo_per_customer_limit} por cliente para este combo`;
       }
       if (alcohol && !restricted) throw new BizError('ITEM_NOT_FOUND', 'Uno de los productos no está disponible', 422, { index });
     } else {
@@ -484,10 +501,7 @@ export async function priceItems(
       if (!row || row.available < qty) {
         problems.push(`Stock insuficiente: ${row?.name ?? 'producto'} (disponible ${Math.max(0, row?.available ?? 0)}, requerido ${qty})`);
         for (const l of lines) if (l.problem == null && (l.components.some((c) => c.skuId === sku) || l.modifiers.some((m) => m.skuId === sku))) l.problem = 'Stock insuficiente';
-        for (const l of lines) {
-          const vrow = await t.maybe(`SELECT sku_id FROM product_variants WHERE id = $1`, [l.variantId]);
-          if (l.problem == null && vrow?.sku_id === sku) l.problem = 'Stock insuficiente';
-        }
+        for (const l of lines) if (l.problem == null && variantById.get(l.variantId)?.sku_id === sku) l.problem = 'Stock insuficiente';
       }
     }
   }

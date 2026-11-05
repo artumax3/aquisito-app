@@ -885,3 +885,59 @@ describe('documentos, permisos de alcohol, banners y avisos', () => {
     expect(n).toEqual({ created: 1, due: 1 });
   });
 });
+
+describe('operación financiera: liquidaciones, efectivo y reembolsos manuales', () => {
+  it('liquidación con cuatro ojos: generar, aprobar (otra persona), ejecutar; anular libera movimientos', async () => {
+    const { demoMfaSecret } = await import('../src/db/seed');
+    const u = await db.one(`INSERT INTO users(email, password_hash, full_name) VALUES ('finanzas2@test.local', (SELECT password_hash FROM users WHERE email = $1), 'Finanzas Dos') RETURNING id`, [E.finance]);
+    await db.q(`INSERT INTO memberships(user_id, role) VALUES ($1,'finance')`, [u.id]);
+    await db.q(`INSERT INTO mfa_totp(user_id, secret_base32, enabled_at) VALUES ($1,$2, now())`, [u.id, demoMfaSecret('finanzas2@test.local')]);
+    const f1 = await as(c, E.finance, true);
+    const f2 = await as(c, 'finanzas2@test.local', true);
+    const start = new Date(Date.now() - 3 * 86400000).toISOString();
+    const end = new Date(Date.now() + 3 * 86400000).toISOString();
+    const s1 = expectOk(await f1.post('/admin/settlements', { partyType: 'courier', partyId: ids.courierAguaytia1, periodStart: start, periodEnd: end })).body;
+    expect(s1.items.length).toBeGreaterThan(0);
+    expect((await f1.post(`/admin/settlements/${s1.id}/approve`, { reason: 'autoaprobación' })).body.error.code).toBe('FOUR_EYES');
+    expect((await f2.post(`/admin/settlements/${s1.id}/execute`, { reference: 'TRX-1', reason: 'sin aprobar' })).body.error.code).toBe('INVALID_STATE');
+    // Anular y volver a generar: los movimientos liberados se incluyen de nuevo, una sola vez.
+    expectOk(await f2.post(`/admin/settlements/${s1.id}/void`, { reason: 'Período mal elegido' }));
+    const s2 = expectOk(await f1.post('/admin/settlements', { partyType: 'courier', partyId: ids.courierAguaytia1, periodStart: start, periodEnd: end })).body;
+    expect(s2.id).not.toBe(s1.id);
+    expect(s2.total_cents).toBe(s1.total_cents);
+    expectOk(await f2.post(`/admin/settlements/${s2.id}/approve`, { reason: 'Revisado contra el libro' }));
+    const ex = expectOk(await f2.post(`/admin/settlements/${s2.id}/execute`, { reference: 'TRX-BCP-0001', reason: 'Transferencia realizada por el titular' })).body;
+    expect([ex.status, ex.execution_reference, ex.consistent]).toEqual(['executed', 'TRX-BCP-0001', true]);
+    expect((await f2.post(`/admin/settlements/${s2.id}/void`, { reason: 'intento' })).status).toBe(409);
+  });
+
+  it('rendición de efectivo exacta y saldo por rendir en cero', async () => {
+    const fin = await as(c, E.finance, true);
+    const courier = await as(c, E.rTgm1);
+    const pending = (await fin.get(`/admin/couriers/${ids.courierTingo1}/cash`)).body;
+    expect(pending.pendingCents).toBeGreaterThan(0);
+    const bad = await fin.post(`/admin/couriers/${ids.courierTingo1}/cash-remittance`, { amountCents: pending.pendingCents - 1, reference: 'DEP-1' });
+    expect(bad.body.error.code).toBe('AMOUNT_MISMATCH');
+    expectOk(await fin.post(`/admin/couriers/${ids.courierTingo1}/cash-remittance`, { amountCents: pending.pendingCents, reference: 'DEP-0001' }));
+    expect((await courier.get('/courier/earnings')).body.cashHeldCents).toBe(0);
+    expect((await fin.post(`/admin/couriers/${ids.courierTingo1}/cash-remittance`, { amountCents: 1, reference: 'DEP-0002' })).body.error.code).toBe('NOTHING_PENDING');
+  });
+
+  it('un reembolso de pasarela no se puede "confirmar" manualmente', async () => {
+    const r = await db.maybe(`SELECT r.id FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE p.provider = 'sandbox' LIMIT 1`);
+    await db.q(`UPDATE refunds SET status = 'pending' WHERE id = $1`, [r!.id]).catch(() => undefined);
+    const fin = await as(c, E.finance, true);
+    expect((await fin.post(`/admin/refunds/${r!.id}/confirm-manual`, { reference: 'MANUAL-1' })).body.error.code).toBe('PROVIDER_REFUND');
+    await db.q(`UPDATE refunds SET status = 'succeeded' WHERE id = $1`, [r!.id]);
+    expect((await fin.get('/admin/refunds?status=pending')).status).toBe(200);
+  });
+
+  it('retención: borra ubicaciones antiguas de repartidores desconectados', async () => {
+    await db.q(`UPDATE couriers SET available = false WHERE user_id = $1`, [ids.courierTingo1]);
+    await db.q(`INSERT INTO courier_locations(courier_id, location, accuracy_m, recorded_at, received_at) VALUES ($1, ST_SetSRID(ST_MakePoint(-75.99,-9.29),4326), 10, now() - interval '2 days', now() - interval '2 days')
+                ON CONFLICT (courier_id) DO UPDATE SET received_at = EXCLUDED.received_at`, [ids.courierTingo1]);
+    const r = (await jobs(['retention'])) as any;
+    expect(r.retention.locations).toBeGreaterThanOrEqual(1);
+    expect(await db.maybe(`SELECT 1 FROM courier_locations WHERE courier_id = $1`, [ids.courierTingo1])).toBeNull();
+  });
+});

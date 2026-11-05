@@ -10,10 +10,10 @@ de ensayo desplegado. Proveedores externos: ninguno real (simuladores de desarro
 |---|---|
 | `pnpm -r typecheck` | 7/7 paquetes sin errores (contracts, api-client, config, api, web, customer-mobile, courier-mobile) |
 | `pnpm --filter @aquisito/contracts test` | **10/10** (edad por fecha completa y 29-feb, hora de Lima vs UTC, franjas que cruzan medianoche, reparto de descuentos, tarifa, stock de combo, máquinas de estado) |
-| `pnpm --filter @aquisito/api test` | **47/47** en 2 archivos (~11 s): 46 de aceptación contra PostgreSQL real + 1 de correspondencia registro↔rutas |
+| `pnpm --filter @aquisito/api test` | **58/58** en 3 archivos (~12 s): 50 de aceptación contra PostgreSQL real, 7 de adaptadores Culqi/Twilio contra servidor simulado local, 1 de correspondencia registro↔rutas |
 | `pnpm --filter @aquisito/web build` | OK, 15 rutas |
-| `pnpm --filter @aquisito/web test:e2e` | **4/4** (circuito completo en 4 módulos; ocultamiento de alcohol; comercio cerrado y fuera de cobertura; pérdida de conexión) |
-| `npx expo export --platform android` (cliente y repartidor) | OK: bundles Hermes de 2.59 MB y 2.57 MB (incluyen expo-notifications) |
+| `pnpm --filter @aquisito/web test:e2e` | **5/5** (circuito completo en 4 módulos; ocultamiento de alcohol; comercio cerrado y fuera de cobertura; pérdida de conexión; documento → aprobación → habilitación de alcohol por la interfaz) |
+| `npx expo export --platform android` (cliente y repartidor) | OK: bundles Hermes de 2.62 MB y 2.60 MB (incluyen notificaciones y mapas en WebView) |
 | `bash infra/scripts/restore-drill.sh` | OK: `pedidos|movimientos|suma|mov_inventario|stock|items = 19|38|10800|19|669|2` idéntico en origen y restaurada; 0 pedidos con total inconsistente; 0 filas de stock inválidas |
 | `APP_ENV=production node dist/main.js` | Aborta listando 7 problemas (simuladores, demo, clave de cifrado, cookies, almacenamiento) |
 | `APP_ENV=staging` con configuración válida | Aborta: "Hay 22 usuarios de demostración activos" |
@@ -72,14 +72,21 @@ interno). Generador en la misma máquina (comparte CPU con el API), una sola IP
 | POST /checkout/quotes | 19 | 31 | 238 | 246 | 0 |
 | POST /orders | 19 | 70 | 374 | 663 | 0 |
 
-Optimización aplicada: el listado de comercios pasó de varias consultas por sucursal a tres
+Tercera corrida (tras cargar por lotes el motor de precios): `GET /stores` p95 56 ms, `GET /stores/:id`
+121, `PUT /cart` 685, `POST /checkout/quotes` 215, `POST /orders` 663, 0 errores. Las operaciones de
+compra (19 muestras por corrida) varían entre corridas porque el generador comparte CPU con el API;
+todas quedaron < 800 ms en las tres corridas.
+
+Optimizaciones aplicadas: el motor de precios precarga variantes, adicionales y componentes por lote; el listado de comercios pasó de varias consultas por sucursal a tres
 consultas por lote (sucursales con cierre activo, horarios, tarifas). Todas las p95 < 800 ms en este
 entorno local. `PUT /cart` sigue con valores atípicos en p95 (muestra de 19; p50 28 ms):
-`priceItems` aún consulta por línea; candidato a carga por lotes. **No** extrapolable a un entorno
+ **No** extrapolable a un entorno
 de ensayo: repetir allí con base gestionada y red real.
 
 ## Fallos pendientes y limitaciones conocidas
-- Sin pruebas con Culqi, Twilio, Expo Push, S3 real ni OSRM (sin credenciales).
+- Sin pruebas con las APIs REALES de Culqi, Twilio, Expo Push, S3 ni OSRM (sin credenciales). Culqi y Twilio sí tienen pruebas contra un servidor simulado local que reproduce la forma documentada de sus respuestas.
+- El checkout web de Culqi (JS v4) está escrito pero nunca se ejecutó: requiere llave pública y el dominio `checkout.culqi.com`.
+- Compilación nativa imposible en este entorno: el proxy de red bloquea `dl.google.com` (Android SDK).
 - Sin compilación nativa ni pruebas en dispositivos Android/iOS.
 - Sin auditoría de accesibilidad con lector de pantalla.
 - El limitador de solicitudes es por proceso (en multiinstancia, complementar en el proxy).

@@ -32,12 +32,12 @@ class ConsoleSms implements SmsProvider {
 export const devSms = ConsoleSms;
 
 /** Twilio (REST). Código escrito; sin probar con credenciales. Verificar remitente habilitado para Perú. */
-class TwilioSms implements SmsProvider {
+export class TwilioSms implements SmsProvider {
   name = 'twilio';
   isSimulator = false;
   async send(to: string, text: string) {
     const c = config();
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${c.TWILIO_ACCOUNT_SID}/Messages.json`, {
+    const res = await fetch(`${c.TWILIO_API_URL}/2010-04-01/Accounts/${c.TWILIO_ACCOUNT_SID}/Messages.json`, {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + Buffer.from(`${c.TWILIO_ACCOUNT_SID}:${c.TWILIO_AUTH_TOKEN}`).toString('base64'),

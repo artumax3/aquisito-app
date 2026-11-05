@@ -130,7 +130,9 @@ cd apps/courier-mobile && npx expo run:android
 ```
 
 La ubicación en segundo plano del repartidor usa `expo-task-manager` + servicio en primer plano de
-Android y **solo puede verificarse en una compilación nativa sobre dispositivo real**.
+Android y **solo puede verificarse en una compilación nativa sobre dispositivo real**. Los mapas de
+las apps usan Leaflet dentro de `react-native-webview` (teselas en `app.json › extra.mapTileUrl`).
+Para push, defina `extra.eas.projectId` (proyecto EAS) y `PUSH_PROVIDER=expo` en el API.
 
 ## Documentación generada
 

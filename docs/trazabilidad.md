@@ -78,3 +78,15 @@ Pruebas: `A-xx` = `apps/api/test/acceptance.test.ts` (criterio xx), `R` = `route
 | Apps móviles compilan (§23-28) | apps | — | — | `tsc` + `expo export` | Probado (bundle JS). APK/IPA nativos: **Bloqueado** |
 | Producción rechaza simuladores y demo (§23-30) | — | — | — | A-30 + `main.ts` | Probado |
 | Registro endpoints = rutas (§18) | — | todas | — | R | Probado |
+| Liquidaciones con aprobación de cuatro ojos, ejecución con referencia y anulación (§15) | `/admin` › Finanzas | admin/settlements/:id/approve, execute, void | settlements, settlement_items | A-finanzas | Probado |
+| Rendición de efectivo del repartidor (§10, §14) | `/admin` › Finanzas | admin/couriers/:id/cash, cash-remittance | cash_collections, ledger_entries | A-finanzas | Probado |
+| Reembolsos manuales solo para efectivo/transferencia (§16) | `/admin` › Finanzas | admin/refunds, refunds/:id/confirm-manual | refunds | A-finanzas | Probado |
+| Retención de datos (§20) | — | job `retention` | courier_locations, otp_challenges, login_attempts, documents | A-retención | Probado |
+| Edición de polígonos versionados en el mapa (§6) | `/admin` › Ciudades | admin/zones/:id/versions | zone_versions | — | Implementado |
+| Tarifas, ventanas de alcohol, prohibiciones y comisiones desde el panel (§6, §12D, §15) | `/admin` › Ciudades, Finanzas | admin/fee-rules, alcohol-rules, alcohol-blackouts, commissions | — | — | Implementado |
+| Roles y accesos con revocación (§7) | `/admin` › Roles | admin/users, admin/roles, admin/roles/:id/revoke | memberships | — | Implementado |
+| Edición de precios sin alterar pedidos confirmados (§9, §13) | `/comercio` › Catálogo | merchant/products/:id | product_variants, order_lines (fotografía) | A-06 | Probado |
+| Evidencia fotográfica en incidencias (§8) | `/pedidos/[id]`, `/admin` › Incidencias | files, orders/:id/incidents, files/:id/url | documents, incidents | A-26 | Probado (API) |
+| Checkout del proveedor en web (tarjeta con token; Yape/Plin con orden) (§14) | `/pedidos/[id]` | payments/config, payments | payments | servidor simulado (adaptador) | **Bloqueado** (llaves Culqi) |
+| Mapas en apps móviles (elección de punto, seguimiento, ruta del repartidor) (§6, §10) | apps | — | — | tsc + bundle | Implementado (sin prueba en dispositivo) |
+| Documentos → habilitación de alcohol por la interfaz (§12D) | `/comercio` › Documentos, `/admin` | files, admin/documents, alcohol-permit | documents, branches | E2E-5 | Probado |

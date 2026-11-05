@@ -173,6 +173,7 @@ export class OrdersController {
   subst(@Auth() a: AuthCtx, @Param('id') id: string, @Param('sid') sid: string, @Body() b: unknown) { return merchant.respondSubstitution(a, id, sid, parse(S.SubstitutionResponseInput, b).accept); }
 
   @Post('payments') pay(@Auth() a: AuthCtx, @Body() b: unknown, @Headers('idempotency-key') key: string) { return payments.startPayment(a, parse(S.StartPaymentInput, b), key); }
+  @Public() @Get('payments/config') paymentsConfig() { return payments.publicPaymentsConfig(); }
   @Get('payments/:id') payment(@Auth() a: AuthCtx, @Param('id') id: string) { return payments.getPayment(a, id); }
   @Public() @Post('webhooks/payments/:provider') @HttpCode(200)
   webhook(@Param('provider') provider: string, @Req() req: Request & { rawBody?: Buffer }) {
@@ -281,10 +282,13 @@ export class AdminController {
   @Roles('admin', 'finance', 'support_agent') @Post('payments/:id/refunds') refund(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown, @Headers('idempotency-key') key: string) { return admin.refund(a, id, parse(S.RefundInput, b), key); }
   @Roles('finance') @Post('payments/:id/confirm-manual') @HttpCode(200) manual(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return payments.confirmManualPayment(a, id, parse(S.ManualPaymentConfirmInput, b)); }
   @Roles('finance') @Post('refunds/:id/confirm-manual') @HttpCode(200)
-  manualRefund(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: any) {
-    if (typeof b?.reference !== 'string' || b.reference.length < 3) throw new BizError('VALIDATION', 'Referencia requerida', 400);
-    return admin.confirmManualRefund(a, id, b.reference);
-  }
+  manualRefund(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.confirmManualRefund(a, id, parse(S.ManualRefundConfirmInput, b).reference); }
+  @Roles('finance', 'admin', 'support_agent') @Get('refunds') refundsList(@Query('status') st?: string) { return admin.refunds(st); }
+  @Roles('finance') @Post('settlements/:id/approve') @HttpCode(200) approveS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.approveSettlement(a, id, parse(S.ReasonInput, b).reason); }
+  @Roles('finance') @Post('settlements/:id/execute') @HttpCode(200) executeS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.executeSettlement(a, id, parse(S.SettlementExecuteInput, b)); }
+  @Roles('finance') @Post('settlements/:id/void') @HttpCode(200) voidS(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.voidSettlement(a, id, parse(S.ReasonInput, b).reason); }
+  @Roles('finance', 'admin', 'city_dispatcher') @Get('couriers/:id/cash') cash(@Param('id') id: string) { return admin.courierCash(id); }
+  @Roles('finance') @Post('couriers/:id/cash-remittance') @HttpCode(200) remit(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.cashRemittance(a, id, parse(S.CashRemittanceInput, b)); }
   @Roles('admin', 'finance') @Post('payments/reconcile') @HttpCode(200) reconcile() { return payments.reconcilePending(0); }
   @Roles('finance', 'admin') @Get('settlements') settlements() { return admin.settlements(); }
   @Roles('finance') @Post('settlements') settle(@Auth() a: AuthCtx, @Body() b: unknown) { return admin.createSettlement(a, parse(S.SettlementInput, b)); }
@@ -301,6 +305,8 @@ export class AdminController {
   @Roles('admin') @Patch('banners/:id') bannerPatch(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { const i = parse(S.BannerPatchInput, b); return banners.setActive(a, id, i.active, i.reason); }
   @Roles('admin') @Get('audit') audit() { return admin.auditLog(); }
   @Roles('admin') @Get('outbox') outbox() { return admin.outbox(); }
+  @Roles('admin') @Get('users') user(@Query('email') email: string) { return admin.findUser(email); }
+  @Roles('admin') @Post('roles/:id/revoke') @HttpCode(200) revokeRole(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.revokeRole(a, id, parse(S.ReasonInput, b).reason); }
   @Roles('admin') @Post('roles') role(@Auth() a: AuthCtx, @Body() b: unknown) { return admin.grantRole(a, parse(S.RoleGrantInput, b)); }
   @Roles('admin') @Get('data-requests') dr() { return admin.dataRequests(); }
   @Roles('admin') @Post('data-requests/:id/process') @HttpCode(200) drp(@Auth() a: AuthCtx, @Param('id') id: string, @Body() b: unknown) { return admin.processDataRequest(a, id, parse(S.ReasonInput, b).reason); }

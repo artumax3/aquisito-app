@@ -170,11 +170,21 @@ function Catalog({ branchId }: { branchId: string }) {
       </div>
       <div className="card">
         <h2>Productos</h2>
+        <p className="muted small">Los cambios de precio aplican a nuevas cotizaciones; los pedidos confirmados conservan su precio.</p>
+        {err && <div className="alert error">{err}</div>}
         {c.products.map((p: any) => (
           <div key={p.id} className="product">
             <span>{p.name} <span className="muted small">· {p.categoryName} · {p.kind === 'prepared' ? 'plato preparado' : p.kind === 'stock' ? 'inventario físico' : 'combo'}</span> {p.containsAlcohol && <span className="badge adult">18+</span>}</span>
             <span className="row">
-              <Money cents={p.variants[0]?.priceCents ?? 0} />
+              {p.variants.map((v: any) => (
+                <label key={v.id} className="small" style={{ maxWidth: 130 }}>{p.variants.length > 1 ? v.name : 'Precio'} S/
+                  <input defaultValue={(v.priceCents / 100).toFixed(2)} inputMode="decimal" onBlur={async (e) => {
+                    const cents = Math.round(Number(e.target.value) * 100);
+                    if (!cents || cents === v.priceCents) return;
+                    try { await api.call('merchantPatchProduct', { params: { id: p.id }, body: { priceByVariant: { [v.id]: cents } } }); cat.reload(); } catch (x) { setErr(errorMessage(x)); }
+                  }} aria-label={`Precio de ${p.name} ${v.name}`} />
+                </label>
+              ))}
               <ActionButton className="sm ghost" onClick={async () => { await api.call('merchantPatchProduct', { params: { id: p.id }, body: { active: !p.available } }); cat.reload(); }}>{p.available ? 'Desactivar' : 'Activar'}</ActionButton>
             </span>
           </div>

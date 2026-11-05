@@ -14,6 +14,25 @@ async function login(page: Page, email: string) {
   await expect(page.getByRole('heading', { name: /Hola,/ })).toBeVisible();
 }
 
+let lastTotpStep = 0;
+/** Ingreso de admin con TOTP; espera un nuevo intervalo de 30 s si el código ya se usó (anti-reutilización). */
+async function adminLogin(page: Page) {
+  await login(page, 'admin@demo.aquisito.local');
+  const { totp } = await import('./totp');
+  const fs = await import('fs');
+  const cred = fs.readFileSync('../api/storage-e2e/demo-credentials.txt', 'utf8').split('\n').find((l) => l.includes('admin@demo'))!;
+  const secret = cred.match(/TOTP:(\S+)/)![1];
+  let step = Math.floor(Date.now() / 30000);
+  if (step <= lastTotpStep) {
+    await page.waitForTimeout((lastTotpStep + 1) * 30000 - Date.now() + 500);
+    step = Math.floor(Date.now() / 30000);
+  }
+  lastTotpStep = step;
+  await page.getByPlaceholder('Código de 6 dígitos').fill(totp(secret));
+  await page.getByRole('button', { name: 'Verificar' }).click();
+  await expect(page.getByText('Sesión verificada con TOTP.')).toBeVisible();
+}
+
 async function newUser(ctx: BrowserContext, email: string) {
   const page = await ctx.newPage();
   await login(page, email);
@@ -90,17 +109,10 @@ test('pedido completo en Aguaytía a través de los cuatro módulos', async ({ b
   await expect(customer.locator('.badge', { hasText: 'Completado' })).toBeVisible();
   await expect(customer.locator('.badge', { hasText: 'Entregado' })).toBeVisible();
 
-  // ---------- Administración (requiere TOTP: sesión elevada vía API con el secreto demo) ----------
+  // ---------- Administración (requiere TOTP) ----------
   const actx = await browser.newContext();
   const admin = await actx.newPage();
-  await login(admin, 'admin@demo.aquisito.local');
-  const { totp } = await import('./totp');
-  const fs = await import('fs');
-  const cred = fs.readFileSync('../api/storage-e2e/demo-credentials.txt', 'utf8').split('\n').find((l) => l.includes('admin@demo'))!;
-  const secret = cred.match(/TOTP:(\S+)/)![1];
-  await admin.getByPlaceholder('Código de 6 dígitos').fill(totp(secret));
-  await admin.getByRole('button', { name: 'Verificar' }).click();
-  await expect(admin.getByText('Sesión verificada con TOTP.')).toBeVisible();
+  await adminLogin(admin);
   await admin.goto('/admin');
   await admin.getByRole('button', { name: 'Pedidos y despacho' }).click();
   await admin.getByLabel('Solo activos').uncheck();
@@ -162,4 +174,38 @@ test('criterio 22: sin conexión no se confirma nada; al reconectar manda el ser
   await page.getByRole('button', { name: /Confirmar pedido/ }).click();
   await page.waitForURL(/\/pedidos\//);
   expect(await countOrders()).toBe(before + 1);
+});
+
+test('documento de autorización: comercio lo sube, admin lo aprueba y habilita la venta de alcohol', async ({ browser }) => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const file = path.join(test.info().outputDir, 'autorizacion.png');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex'));
+
+  const m = await newUser(await browser.newContext(), 'comercio4@demo.aquisito.local');
+  await m.goto('/comercio');
+  await m.getByRole('button', { name: 'Documentos' }).click();
+  const card = m.locator('.card', { hasText: 'Documentos de la sucursal' });
+  await card.getByLabel('Tipo de documento').selectOption('autorizacion_alcohol');
+  await card.getByLabel('Vence (si aplica)').fill('2027-12-31');
+  await card.getByLabel('Archivo').setInputFiles(file);
+  await card.getByRole('button', { name: 'Subir documento' }).click();
+  await expect(card.getByText('Documento enviado a revisión')).toBeVisible();
+
+  const admin = await (await browser.newContext()).newPage();
+  await adminLogin(admin);
+  await admin.goto('/admin');
+  await admin.getByRole('button', { name: 'Comercios' }).click();
+  const merchantCard = admin.locator('.card', { hasText: 'Cevichería Demo Tingo' });
+  // Sin documento aprobado, la habilitación se rechaza con un mensaje claro.
+  await merchantCard.getByRole('button', { name: 'Aprobar habilitación alcohol' }).click();
+  await expect(merchantCard.getByText(/Falta un documento de autorización/)).toBeVisible();
+  await admin.getByRole('button', { name: 'Documentos', exact: true }).click();
+  const docRow = admin.locator('.card', { hasText: 'Autorización para venta de alcohol' }).first();
+  await docRow.getByRole('button', { name: 'Aprobar' }).click();
+  await expect(docRow.getByText('approved')).toBeVisible();
+  await admin.getByRole('button', { name: 'Comercios' }).click();
+  await merchantCard.getByRole('button', { name: 'Aprobar habilitación alcohol' }).click();
+  await expect(merchantCard.getByText('alcohol: approved')).toBeVisible();
 });
