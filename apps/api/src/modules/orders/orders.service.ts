@@ -330,11 +330,11 @@ export async function createOrder(a: AuthCtx, input: CreateOrderInput, idempoten
   const prior = await db.maybe(`SELECT id FROM orders WHERE user_id = $1 AND idempotency_key = $2`, [a.userId, idempotencyKey]);
   if (prior) return { order: await getOrder(a, prior.id), replayed: true };
   try {
-    const id = await tx(async (t) => {
+    const result = await tx(async (t): Promise<{ id: string; replayed: boolean }> => {
       // Serializa confirmaciones concurrentes del mismo usuario+clave.
       await t.q(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`order:${a.userId}:${idempotencyKey}`]);
       const again = await t.maybe(`SELECT id FROM orders WHERE user_id = $1 AND idempotency_key = $2`, [a.userId, idempotencyKey]);
-      if (again) return again.id as string;
+      if (again) return { id: again.id as string, replayed: true };
       const q = await t.maybe(`SELECT * FROM quotes WHERE id = $1 AND user_id = $2 FOR UPDATE`, [input.quoteId, a.userId]);
       if (!q) throw new BizError('NOT_FOUND', 'Cotización no encontrada', 404);
       if (q.used_at) {
@@ -433,9 +433,9 @@ export async function createOrder(a: AuthCtx, input: CreateOrderInput, idempoten
       }
       await t.q(`DELETE FROM carts WHERE user_id = $1`, [a.userId]);
       await emit(t, 'order.created', order.id, { orderId: order.id });
-      return order.id as string;
+      return { id: order.id as string, replayed: false };
     });
-    return { order: await getOrder(a, id), replayed: false };
+    return { order: await getOrder(a, result.id), replayed: result.replayed };
   } catch (e: any) {
     if (e?.code === '23505' && /idempotency|quote_id/.test(e?.constraint ?? '')) {
       const o = await db.maybe(`SELECT id FROM orders WHERE user_id = $1 AND idempotency_key = $2`, [a.userId, idempotencyKey]);

@@ -54,10 +54,12 @@ export const endpoints = {
   removeFavorite: e({ method: 'DELETE', path: '/me/favorites/:branchId', auth: 'session', tag: 'me', summary: 'Quitar favorito' }),
   notifications: e({ method: 'GET', path: '/notifications', auth: 'session', tag: 'me', summary: 'Notificaciones internas' }),
   readNotification: e({ method: 'POST', path: '/notifications/:id/read', auth: 'session', tag: 'me', summary: 'Marcar leída' }),
+  pushToken: e({ method: 'POST', path: '/me/push-tokens', auth: 'session', tag: 'me', summary: 'Registrar token push del dispositivo' }),
   realtime: e({ method: 'GET', path: '/realtime', auth: 'session', tag: 'realtime', summary: 'SSE de novedades del usuario (recuperar desde API al reconectar)' }),
 
   // Ciudades / cobertura
   cities: e({ method: 'GET', path: '/cities', auth: 'public', tag: 'geo', summary: 'Ciudades operativas' }),
+  suggestCity: e({ method: 'GET', path: '/cities/suggest', auth: 'public', tag: 'geo', summary: 'Sugerir ciudad por ubicación (con permiso)' }),
   cityZones: e({ method: 'GET', path: '/cities/:id/zones', auth: 'public', tag: 'geo', summary: 'Zonas vigentes (GeoJSON de prueba)' }),
   coverageCheck: e({ method: 'POST', path: '/coverage/check', auth: 'public', tag: 'geo', summary: 'Validar cobertura de un punto', body: S.CoverageCheckInput }),
 
@@ -136,7 +138,7 @@ export const endpoints = {
   courierAgeCheck: e({ method: 'POST', path: '/courier/deliveries/:orderId/age-check', auth: ['courier'], tag: 'courier', summary: 'Comprobación presencial de edad', body: S.AgeCheckInput }),
   courierDeliver: e({ method: 'POST', path: '/courier/deliveries/:orderId/deliver', auth: ['courier'], tag: 'courier', summary: 'Confirmar entrega con código', body: S.DeliverInput }),
   courierFail: e({ method: 'POST', path: '/courier/deliveries/:orderId/fail', auth: ['courier'], tag: 'courier', summary: 'Entrega fallida', body: S.FailDeliveryInput }),
-  courierReturned: e({ method: 'POST', path: '/courier/deliveries/:orderId/returned', auth: ['courier'], tag: 'courier', summary: 'Entregado de vuelta al comercio' }),
+  courierRelease: e({ method: 'POST', path: '/courier/deliveries/:orderId/release', auth: ['courier'], tag: 'courier', summary: 'Liberar asignación antes del recojo (con motivo)', body: S.ReasonInput }),
   courierEarnings: e({ method: 'GET', path: '/courier/earnings', auth: ['courier'], tag: 'courier', summary: 'Ganancias, propinas, efectivo por rendir' }),
   courierHistory: e({ method: 'GET', path: '/courier/history', auth: ['courier'], tag: 'courier', summary: 'Historial de entregas propias' }),
 
@@ -165,6 +167,8 @@ export const endpoints = {
   adminCoupons: e({ method: 'GET', path: '/admin/coupons', auth: ['admin', 'finance'], tag: 'admin', summary: 'Cupones' }),
   adminCreateCoupon: e({ method: 'POST', path: '/admin/coupons', auth: ['admin'], tag: 'admin', summary: 'Crear cupón', body: S.CouponInput }),
   adminCommission: e({ method: 'POST', path: '/admin/commissions', auth: ['admin', 'finance'], tag: 'admin', summary: 'Comisión por comercio y vigencia', body: S.CommissionInput }),
+  adminTraining: e({ method: 'POST', path: '/admin/couriers/:id/training', auth: ['admin'], tag: 'admin', summary: 'Registrar capacitación (documentos, rechazo, privacidad, soporte, venta responsable)' }),
+  adminConfirmRefund: e({ method: 'POST', path: '/admin/refunds/:id/confirm-manual', auth: ['finance'], tag: 'admin', summary: 'Confirmar reembolso manual (efectivo/transferencia)' }),
   adminRefund: e({ method: 'POST', path: '/admin/payments/:id/refunds', auth: ['admin', 'finance', 'support_agent'], tag: 'admin', summary: 'Solicitar reembolso', body: S.RefundInput, idempotent: true }),
   adminConfirmManual: e({ method: 'POST', path: '/admin/payments/:id/confirm-manual', auth: ['finance'], tag: 'admin', summary: 'Conciliar transferencia manual', body: S.ManualPaymentConfirmInput }),
   adminReconcile: e({ method: 'POST', path: '/admin/payments/reconcile', auth: ['admin', 'finance'], tag: 'admin', summary: 'Ejecutar conciliación de pendientes' }),
@@ -187,6 +191,9 @@ export const endpoints = {
   createComplaint: e({ method: 'POST', path: '/complaints', auth: 'public', tag: 'complaints', summary: 'Registrar reclamo o queja', body: S.ComplaintInput }),
   getComplaint: e({ method: 'GET', path: '/complaints/:number', auth: 'public', tag: 'complaints', summary: 'Consultar constancia (requiere email)' }),
 
+  uploadFile: e({ method: 'POST', path: '/files', auth: 'session', tag: 'files', summary: 'Subir archivo privado (validación por firma de bytes, 5 MB)' }),
+  fileUrl: e({ method: 'GET', path: '/files/:id/url', auth: 'session', tag: 'files', summary: 'Enlace temporal (5 min)' }),
+  signedFile: e({ method: 'GET', path: '/files/signed', auth: 'public', tag: 'files', summary: 'Descarga con firma y vencimiento' }),
   health: e({ method: 'GET', path: '/health', auth: 'public', tag: 'ops', summary: 'Health check' }),
   metrics: e({ method: 'GET', path: '/metrics', auth: ['admin'], tag: 'ops', summary: 'Métricas operativas' }),
 } as const;
