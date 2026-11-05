@@ -76,7 +76,7 @@ export class SandboxProvider implements PaymentProvider {
       // El proveedor registró el cargo pero la respuesta "se perdió": resultado incierto.
       throw Object.assign(new Error('timeout simulado'), { uncertainReference: reference });
     }
-    return { outcome: 'pending', providerReference: reference, checkoutUrl: `${config().PUBLIC_WEB_URL}/dev/checkout-simulado?ref=${reference}` };
+    return { outcome: 'pending', providerReference: reference, checkoutUrl: `${config().PUBLIC_WEB_URL}/pedidos/${input.orderId}` };
   }
 
   async getStatus(reference: string): Promise<ProviderStatus> {

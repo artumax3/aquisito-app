@@ -13,3 +13,5 @@ storage/
 apps/*/web-build
 apps/*/dist-export
 *.tsbuildinfo
+apps/api/storage-e2e/
+apps/web/test-results/
