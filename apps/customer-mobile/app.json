@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Aquisito (provisional)",
+    "slug": "aquisito-cliente",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "pe.aquisito.provisional.cliente",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "ios": {
+      "bundleIdentifier": "pe.aquisito.provisional.cliente",
+      "infoPlist": { "NSLocationWhenInUseUsageDescription": "Usamos tu ubicación solo si la autorizas, para sugerir tu ciudad y marcar el punto de entrega." }
+    },
+    "plugins": ["expo-secure-store", ["expo-location", { "locationWhenInUsePermission": "Usamos tu ubicación solo si la autorizas, para sugerir tu ciudad y marcar el punto de entrega." }]],
+    "extra": { "apiUrl": "http://10.0.2.2:4000" }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Aquisito Repartidor (provisional)",
+    "slug": "aquisito-repartidor",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "pe.aquisito.provisional.repartidor",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION"]
+    },
+    "ios": {
+      "bundleIdentifier": "pe.aquisito.provisional.repartidor",
+      "infoPlist": {
+        "UIBackgroundModes": ["location"],
+        "NSLocationWhenInUseUsageDescription": "Compartimos tu ubicación con el cliente y despacho solo mientras estás disponible o con una entrega activa.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Para seguir la entrega con la pantalla apagada mientras estás disponible. Puedes desactivarlo al desconectarte."
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      ["expo-location", { "isAndroidBackgroundLocationEnabled": true, "isAndroidForegroundServiceEnabled": true, "locationAlwaysAndWhenInUsePermission": "Para seguir la entrega con la pantalla apagada mientras estás disponible." }]
+    ],
+    "extra": { "apiUrl": "http://10.0.2.2:4000" }
+  }
+}
